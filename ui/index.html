@@ -3,44 +3,61 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>PrivetZapret</title>
+  <meta name="theme-color" content="#f4f6f5">
+  <title>PrivetZapret — YouTube и Discord</title>
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <main class="shell">
-    <header>
-      <div class="brand"><span class="brand-mark">P</span><span>PrivetZapret</span></div>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand" aria-label="PrivetDNS"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span><span>privet<span>dns</span></span></div>
+      <span class="product-name">PrivetZapret</span>
       <span class="platform" id="platform">Windows / Arch</span>
-    </header>
-
-    <section class="hero">
-      <div class="orb" id="orb"><span></span></div>
-      <div class="state" id="state">Проверяем состояние…</div>
-      <div class="subtitle" id="subtitle">Только YouTube и Discord. Остальной трафик не меняется.</div>
-      <button class="primary" id="mainButton" disabled>Подождите</button>
-    </section>
-
-    <section class="card">
-      <div class="card-title"><div><h2>Режим работы</h2><p>Начните со сбалансированного</p></div></div>
-      <div class="modes" id="modes">
-        <button data-mode="compatible"><b>Совместимый</b><small>Для нестабильных сетей</small></button>
-        <button data-mode="balanced" class="selected"><b>Сбалансированный</b><small>Рекомендуется</small></button>
-        <button data-mode="strong"><b>Усиленный</b><small>Если обычный не помог</small></button>
+    </div>
+  </header>
+  <main>
+    <section class="hero page-width" aria-labelledby="state">
+      <div class="hero-copy">
+        <p class="intro-line"><span class="signal-dot" aria-hidden="true"></span> YouTube и Discord</p>
+        <h1 id="state">Проверяем состояние…</h1>
+        <p class="hero-description" id="subtitle">Только выбранные сервисы. Остальной трафик идёт напрямую.</p>
+        <div class="hero-actions"><button class="primary" id="mainButton" disabled>Подождите</button></div>
+        <p class="hero-footnote">Автозапуск настраивается при установке. Изменения можно полностью удалить.</p>
+      </div>
+      <div class="route-graphic" aria-label="Схема работы PrivetZapret">
+        <div class="route-top"><span>Маршрут соединения</span><span class="route-index">LOCAL / 01</span></div>
+        <div class="route-flow">
+          <div class="route-origin"><span class="route-node device-node"><i></i></span><strong>Ваш компьютер</strong><small>обычное подключение</small></div>
+          <div class="route-spine" aria-hidden="true"><span></span></div>
+          <div class="route-destination"><span class="route-node service-node"><i></i><i></i><i></i></span><strong>YouTube · Discord</strong><small>локальная обработка</small></div>
+        </div>
+        <div class="route-result"><div class="orb" id="orb"><span></span></div><div><strong>Только нужные соединения</strong><span>Данные не отправляются через сторонний VPN или прокси.</span></div></div>
+        <div class="route-bottom"><span>Windows 10/11 · Arch Linux</span><span>≠ VPN</span></div>
       </div>
     </section>
-
-    <section class="services">
-      <div><span class="service-icon youtube">▶</span><p><b>YouTube</b><small id="youtubeState">Готов к работе</small></p></div>
-      <div><span class="service-icon discord">⌁</span><p><b>Discord</b><small id="discordState">Готов к работе</small></p></div>
-      <button class="check" id="checkButton">Проверить</button>
+    <section class="control-section">
+      <div class="page-width control-grid">
+        <section class="settings-panel" aria-labelledby="mode-title">
+          <div class="section-heading"><div><p class="section-marker">Настройка</p><h2 id="mode-title">Режим работы</h2></div><p>Меняйте режим только если основной вариант не помог.</p></div>
+          <div class="modes" id="modes">
+            <button data-mode="compatible"><span>01</span><b>Совместимый</b><small>Для нестабильных сетей</small></button>
+            <button data-mode="balanced" class="selected"><span>02</span><b>Сбалансированный</b><small>Основной вариант</small></button>
+            <button data-mode="strong"><span>03</span><b>Усиленный</b><small>Если обычный не помог</small></button>
+          </div>
+        </section>
+        <section class="services-panel" aria-labelledby="services-title">
+          <div class="section-heading"><div><p class="section-marker">Проверка</p><h2 id="services-title">Сервисы</h2></div></div>
+          <div class="service-list">
+            <div><span class="service-number">01</span><p><b>YouTube</b><small id="youtubeState">Готов к работе</small></p><span class="service-dot" aria-hidden="true"></span></div>
+            <div><span class="service-number">02</span><p><b>Discord</b><small id="discordState">Готов к работе</small></p><span class="service-dot" aria-hidden="true"></span></div>
+          </div>
+          <button class="check" id="checkButton">Проверить доступность <span aria-hidden="true">↗</span></button>
+        </section>
+      </div>
     </section>
-
-    <footer>
-      <span>Автозапуск включается при установке</span>
-      <button id="removeButton" class="link" hidden>Удалить</button>
-    </footer>
   </main>
-  <div class="toast" id="toast"></div>
+  <footer class="site-footer"><div class="page-width footer-inner"><span>PrivetDNS · локальное приложение</span><button id="removeButton" class="remove" hidden>Удалить PrivetZapret</button></div></footer>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js"></script>
 </body>
 </html>

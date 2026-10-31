@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStrategiesAcceptedByZapret2(t *testing.T) {
@@ -29,5 +31,28 @@ func TestStrategiesAcceptedByZapret2(t *testing.T) {
 				t.Fatalf("zapret2 rejected strategy: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+func TestWriteFileIfChangedLeavesIdenticalFileAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "driver.sys")
+	data := []byte("same driver")
+	if err := writeFileIfChanged(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := writeFileIfChanged(path, bytes.Clone(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("identical file was unexpectedly rewritten")
 	}
 }

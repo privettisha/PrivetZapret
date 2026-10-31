@@ -25,6 +25,11 @@ var windowsPayload embed.FS
 
 var windowsFiles = []string{"winws2.exe", "WinDivert.dll", "WinDivert64.sys", "cygwin1.dll"}
 
+// Keep engine assets in a versioned directory. An already loaded WinDivert
+// driver may legitimately lock an older .sys file after winws2 has exited.
+// A new release must never depend on overwriting that file in place.
+const windowsEngineRevision = "engine-zapret2-1.0.6-r2"
+
 func windowsInstallDir() string {
 	base := os.Getenv("ProgramData")
 	if base == "" {
@@ -34,6 +39,10 @@ func windowsInstallDir() string {
 }
 
 func windowsConfigPath() string { return filepath.Join(windowsInstallDir(), "config.json") }
+
+func windowsEngineDir() string { return filepath.Join(windowsInstallDir(), windowsEngineRevision) }
+
+func windowsVersionPath() string { return filepath.Join(windowsInstallDir(), "version.txt") }
 
 func platformHandleSpecialMode() bool {
 	if len(os.Args) > 1 && os.Args[1] == "--service" {
@@ -76,15 +85,24 @@ func platformStatus() Status {
 			s.Close()
 		}
 	}
-	return Status{Installed: installed, Active: active, Mode: loadConfig(windowsConfigPath()).Mode, Platform: "Windows · " + runtime.GOARCH}
+	return Status{Installed: installed, Active: active, Mode: loadConfig(windowsConfigPath()).Mode, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion}
 }
 
 func platformInstall(mode string) error {
+	if platformStatus().Installed {
+		if err := platformStop(); err != nil {
+			return fmt.Errorf("не удалось остановить предыдущую версию: %w", err)
+		}
+	}
 	dir := windowsInstallDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	if err := extractCommon(dir); err != nil {
+	engineDir := windowsEngineDir()
+	if err := os.MkdirAll(engineDir, 0755); err != nil {
+		return err
+	}
+	if err := extractCommon(engineDir); err != nil {
 		return err
 	}
 	for _, name := range windowsFiles {
@@ -92,8 +110,8 @@ func platformInstall(mode string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), b, 0644); err != nil {
-			return err
+		if err := writeFileIfChanged(filepath.Join(engineDir, name), b, 0644); err != nil {
+			return fmt.Errorf("подготовка %s: %w", name, err)
 		}
 	}
 	self, err := os.Executable()
@@ -111,6 +129,9 @@ func platformInstall(mode string) error {
 		}
 	}
 	if err := saveConfig(windowsConfigPath(), mode); err != nil {
+		return err
+	}
+	if err := writeFileIfChanged(windowsVersionPath(), []byte(appVersion+"\n"), 0644); err != nil {
 		return err
 	}
 
@@ -220,21 +241,34 @@ type zapretService struct{}
 func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	changes <- svc.Status{State: svc.StartPending}
 	dir := windowsInstallDir()
+	engineDir := windowsEngineDir()
 	args := []string{
 		"--wf-tcp-out=443",
-		"--wf-raw-part=@" + filepath.Join(dir, "windivert_part.discord_media.txt"),
-		"--wf-raw-part=@" + filepath.Join(dir, "windivert_part.quic_initial_ietf.txt"),
+		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.discord_media.txt"),
+		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.quic_initial_ietf.txt"),
 	}
-	args = append(args, strategyArgs(dir, loadConfig(windowsConfigPath()).Mode)...)
-	cmd := exec.Command(filepath.Join(dir, "winws2.exe"), args...)
-	cmd.Dir = dir
+	args = append(args, strategyArgs(engineDir, loadConfig(windowsConfigPath()).Mode)...)
+	cmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)
+	cmd.Dir = engineDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	logFile, _ := os.OpenFile(filepath.Join(dir, "service.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if logFile != nil {
+		defer logFile.Close()
+		cmd.Stdout, cmd.Stderr = logFile, logFile
+	} else {
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	}
 	if err := cmd.Start(); err != nil {
 		return false, 1
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+		changes <- svc.Status{State: svc.Stopped}
+		return false, 2
+	case <-time.After(700 * time.Millisecond):
+	}
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	for {
 		select {

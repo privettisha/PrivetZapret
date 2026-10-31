@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
 	appName     = "PrivetZapret"
 	serviceName = "PrivetZapret"
+	appVersion  = "0.2.0"
 )
 
 type Config struct {
@@ -17,11 +19,20 @@ type Config struct {
 }
 
 type Status struct {
-	Installed bool   `json:"installed"`
-	Active    bool   `json:"active"`
-	Mode      string `json:"mode"`
-	Platform  string `json:"platform"`
-	Message   string `json:"message,omitempty"`
+	Installed   bool   `json:"installed"`
+	Active      bool   `json:"active"`
+	Mode        string `json:"mode"`
+	Platform    string `json:"platform"`
+	Message     string `json:"message,omitempty"`
+	NeedsUpdate bool   `json:"needs_update"`
+}
+
+func installedVersion(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func normalizeMode(mode string) string {

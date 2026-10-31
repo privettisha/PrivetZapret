@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"os"
@@ -27,11 +28,25 @@ func extractCommon(dir string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), b, 0644); err != nil {
+		if err := writeFileIfChanged(filepath.Join(dir, name), b, 0644); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// writeFileIfChanged deliberately leaves an identical file untouched. This is
+// important on Windows: a loaded WinDivert driver can keep its .sys file open
+// even when no user-visible process remains.
+func writeFileIfChanged(path string, data []byte, mode os.FileMode) error {
+	current, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(current, data) {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(path, data, mode)
 }
 
 func strategyArgs(dir, mode string) []string {

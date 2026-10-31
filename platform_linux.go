@@ -48,13 +48,21 @@ func platformRelaunchElevated() {
 
 func linuxConfigPath() string { return filepath.Join(linuxInstallDir, "config.json") }
 
+func linuxVersionPath() string { return filepath.Join(linuxInstallDir, "version.txt") }
+
 func platformStatus() Status {
 	_, statErr := os.Stat(linuxUnitPath)
 	active := exec.Command("systemctl", "is-active", "--quiet", "privetzapret.service").Run() == nil
-	return Status{Installed: statErr == nil, Active: active, Mode: loadConfig(linuxConfigPath()).Mode, Platform: "Linux · " + runtime.GOARCH}
+	installed := statErr == nil
+	return Status{Installed: installed, Active: active, Mode: loadConfig(linuxConfigPath()).Mode, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion}
 }
 
 func platformInstall(mode string) error {
+	if platformStatus().Installed {
+		if err := platformStop(); err != nil {
+			return err
+		}
+	}
 	if _, err := exec.LookPath("nft"); err != nil {
 		return errors.New("не найден nftables: установите пакет nftables")
 	}
@@ -89,6 +97,9 @@ func platformInstall(mode string) error {
 		}
 	}
 	if err := saveConfig(linuxConfigPath(), mode); err != nil {
+		return err
+	}
+	if err := writeFileIfChanged(linuxVersionPath(), []byte(appVersion+"\n"), 0644); err != nil {
 		return err
 	}
 	unit := `[Unit]
