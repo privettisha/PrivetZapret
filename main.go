@@ -78,6 +78,12 @@ func main() {
 	mux.HandleFunc("GET /api/check", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		return writeJSON(w, connectivityCheck())
 	}))
+	mux.HandleFunc("POST /api/telegram/connect", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		if err := platformConnectTelegram(); err != nil {
+			return err
+		}
+		return writeJSON(w, map[string]bool{"ok": true})
+	}))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -135,8 +141,9 @@ func connectivityCheck() map[string]any {
 		return resp.StatusCode < 500
 	}
 	return map[string]any{
-		"youtube": check("https://www.youtube.com/generate_204"),
-		"discord": check("https://discord.com/api/v10/gateway"),
+		"youtube":  check("https://www.youtube.com/generate_204"),
+		"discord":  check("https://discord.com/api/v10/gateway"),
+		"telegram": telegramProxyReady(),
 	}
 }
 

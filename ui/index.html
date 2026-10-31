@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f4f6f5">
-  <title>PrivetZapret — YouTube и Discord</title>
+  <title>PrivetZapret — YouTube, Discord и Telegram</title>
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -18,7 +18,7 @@
   <main>
     <section class="hero page-width" aria-labelledby="state">
       <div class="hero-copy">
-        <p class="intro-line"><span class="signal-dot" aria-hidden="true"></span> YouTube и Discord</p>
+        <p class="intro-line"><span class="signal-dot" aria-hidden="true"></span> YouTube · Discord · Telegram</p>
         <h1 id="state">Проверяем состояние…</h1>
         <p class="hero-description" id="subtitle">Только выбранные сервисы. Остальной трафик идёт напрямую.</p>
         <div class="hero-actions"><button class="primary" id="mainButton" disabled>Подождите</button></div>
@@ -29,7 +29,7 @@
         <div class="route-flow">
           <div class="route-origin"><span class="route-node device-node"><i></i></span><strong>Ваш компьютер</strong><small>обычное подключение</small></div>
           <div class="route-spine" aria-hidden="true"><span></span></div>
-          <div class="route-destination"><span class="route-node service-node"><i></i><i></i><i></i></span><strong>YouTube · Discord</strong><small>локальная обработка</small></div>
+          <div class="route-destination"><span class="route-node service-node"><i></i><i></i><i></i></span><strong>YouTube · Discord · Telegram</strong><small>локальная обработка</small></div>
         </div>
         <div class="route-result"><div class="orb" id="orb"><span></span></div><div><strong>Только нужные соединения</strong><span>Данные не отправляются через сторонний VPN или прокси.</span></div></div>
         <div class="route-bottom"><span>Windows 10/11 · Arch Linux</span><span>≠ VPN</span></div>
@@ -50,7 +50,9 @@
           <div class="service-list">
             <div><span class="service-number">01</span><p><b>YouTube</b><small id="youtubeState">Готов к работе</small></p><span class="service-dot" aria-hidden="true"></span></div>
             <div><span class="service-number">02</span><p><b>Discord</b><small id="discordState">Готов к работе</small></p><span class="service-dot" aria-hidden="true"></span></div>
+            <div><span class="service-number">03</span><p><b>Telegram Desktop</b><small id="telegramState">Подключите локальный прокси</small></p><span class="service-dot" aria-hidden="true"></span></div>
           </div>
+          <button class="check connect" id="telegramButton">Подключить в Telegram <span aria-hidden="true">↗</span></button>
           <button class="check" id="checkButton">Проверить доступность <span aria-hidden="true">↗</span></button>
         </section>
       </div>

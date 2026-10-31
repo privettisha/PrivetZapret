@@ -23,12 +23,12 @@ import (
 //go:embed payload/windows/*
 var windowsPayload embed.FS
 
-var windowsFiles = []string{"winws2.exe", "WinDivert.dll", "WinDivert64.sys", "cygwin1.dll"}
+var windowsFiles = []string{"winws2.exe", "WinDivert.dll", "WinDivert64.sys", "cygwin1.dll", "PrivetTgWs.exe"}
 
 // Keep engine assets in a versioned directory. An already loaded WinDivert
 // driver may legitimately lock an older .sys file after winws2 has exited.
 // A new release must never depend on overwriting that file in place.
-const windowsEngineRevision = "engine-zapret2-1.0.6-r2"
+const windowsEngineRevision = "engine-zapret2-1.0.6-r3"
 
 func windowsInstallDir() string {
 	base := os.Getenv("ProgramData")
@@ -85,7 +85,7 @@ func platformStatus() Status {
 			s.Close()
 		}
 	}
-	return Status{Installed: installed, Active: active, Mode: loadConfig(windowsConfigPath()).Mode, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion}
+	return Status{Installed: installed, Active: active, Mode: loadConfig(windowsConfigPath()).Mode, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && telegramProxyReady()}
 }
 
 func platformInstall(mode string) error {
@@ -144,7 +144,7 @@ func platformInstall(mode string) error {
 	if err != nil {
 		s, err = m.CreateService(serviceName, dst, mgr.Config{
 			DisplayName: "PrivetZapret",
-			Description: "YouTube and Discord connectivity",
+			Description: "YouTube, Discord and Telegram connectivity",
 			StartType:   mgr.StartAutomatic,
 		}, "--service")
 		if err != nil {
@@ -152,6 +152,8 @@ func platformInstall(mode string) error {
 		}
 	}
 	defer s.Close()
+	_ = s.SetRecoveryActions([]mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 2 * time.Second}}, 86400)
+	_ = s.SetRecoveryActionsOnNonCrashFailures(true)
 	if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
 		return fmt.Errorf("запуск службы: %w", err)
 	}
@@ -248,43 +250,80 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.quic_initial_ietf.txt"),
 	}
 	args = append(args, strategyArgs(engineDir, loadConfig(windowsConfigPath()).Mode)...)
-	cmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)
-	cmd.Dir = engineDir
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	zapCmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)
+	zapCmd.Dir = engineDir
+	zapCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cfg := loadConfig(windowsConfigPath())
+	tgCmd := exec.Command(filepath.Join(engineDir, "PrivetTgWs.exe"),
+		"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
+		"--log-file", filepath.Join(dir, "telegram.log"),
+		"--log-max-mb", "3", "--log-backups", "1")
+	tgCmd.Dir = engineDir
+	tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
+	tgCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	logFile, _ := os.OpenFile(filepath.Join(dir, "service.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if logFile != nil {
 		defer logFile.Close()
-		cmd.Stdout, cmd.Stderr = logFile, logFile
+		zapCmd.Stdout, zapCmd.Stderr = logFile, logFile
+		tgCmd.Stdout, tgCmd.Stderr = logFile, logFile
 	} else {
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		zapCmd.Stdout, zapCmd.Stderr = os.Stdout, os.Stderr
+		tgCmd.Stdout, tgCmd.Stderr = os.Stdout, os.Stderr
 	}
-	if err := cmd.Start(); err != nil {
+	if err := zapCmd.Start(); err != nil {
 		return false, 1
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	zapDone := make(chan error, 1)
+	go func() { zapDone <- zapCmd.Wait() }()
+	if err := tgCmd.Start(); err != nil {
+		_ = zapCmd.Process.Kill()
+		<-zapDone
+		return false, 3
+	}
+	tgDone := make(chan error, 1)
+	go func() { tgDone <- tgCmd.Wait() }()
 	select {
-	case <-done:
+	case <-zapDone:
+		_ = tgCmd.Process.Kill()
+		<-tgDone
 		changes <- svc.Status{State: svc.Stopped}
 		return false, 2
+	case <-tgDone:
+		_ = zapCmd.Process.Kill()
+		<-zapDone
+		changes <- svc.Status{State: svc.Stopped}
+		return false, 3
 	case <-time.After(700 * time.Millisecond):
 	}
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	for {
 		select {
-		case <-done:
+		case <-zapDone:
+			_ = tgCmd.Process.Kill()
+			<-tgDone
 			changes <- svc.Status{State: svc.Stopped}
 			return false, 2
+		case <-tgDone:
+			_ = zapCmd.Process.Kill()
+			<-zapDone
+			changes <- svc.Status{State: svc.Stopped}
+			return false, 3
 		case c := <-requests:
 			switch c.Cmd {
 			case svc.Interrogate:
 				changes <- c.CurrentStatus
 			case svc.Stop, svc.Shutdown:
 				changes <- svc.Status{State: svc.StopPending}
-				_ = cmd.Process.Kill()
-				select {
-				case <-done:
-				case <-time.After(3 * time.Second):
+				_ = zapCmd.Process.Kill()
+				_ = tgCmd.Process.Kill()
+				for i := 0; i < 2; i++ {
+					select {
+					case <-zapDone:
+						zapDone = nil
+					case <-tgDone:
+						tgDone = nil
+					case <-time.After(3 * time.Second):
+					}
 				}
 				changes <- svc.Status{State: svc.Stopped}
 				return false, 0
@@ -295,4 +334,13 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 
 func platformOpenBrowser(url string) {
 	_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+}
+
+func platformConnectTelegram() error {
+	cfg := loadConfig(windowsConfigPath())
+	if cfg.TelegramSecret == "" || !telegramProxyReady() {
+		return errors.New("сначала запустите PrivetZapret")
+	}
+	platformOpenBrowser(telegramProxyURL(cfg.TelegramSecret))
+	return nil
 }

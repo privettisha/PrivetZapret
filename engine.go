@@ -17,7 +17,9 @@ var commonFiles = []string{
 	"quic_initial_www_google_com.bin",
 	"youtube.txt",
 	"discord.txt",
+	"telegram.txt",
 	"ZAPRET2-LICENSE.txt",
+	"TG-WS-PROXY-LICENSE.txt",
 	"windivert_part.discord_media.txt",
 	"windivert_part.quic_initial_ietf.txt",
 }
@@ -86,6 +88,12 @@ func strategyArgs(dir, mode string) []string {
 		"--filter-udp=443", "--filter-l7=quic", "--hostlist=" + p("discord.txt"),
 		"--payload=quic_initial",
 		fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
+		"--new",
+
+		"--filter-tcp=443", "--filter-l7=tls", "--hostlist=" + p("telegram.txt"), "--out-range=-d10",
+		"--payload=tls_client_hello",
+		fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d", repeats),
+		"--lua-desync=" + split,
 		"--new",
 
 		"--filter-l7=discord", "--payload=discord_ip_discovery",
