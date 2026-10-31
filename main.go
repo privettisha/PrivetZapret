@@ -38,11 +38,7 @@ func main() {
 		return writeJSON(w, platformStatus())
 	}))
 	mux.HandleFunc("POST /api/install", api(token, func(w http.ResponseWriter, r *http.Request) error {
-		var body struct {
-			Mode string `json:"mode"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if err := platformInstall(normalizeMode(body.Mode)); err != nil {
+		if err := platformInstall("balanced"); err != nil {
 			return err
 		}
 		return writeJSON(w, platformStatus())
@@ -59,24 +55,11 @@ func main() {
 		}
 		return writeJSON(w, platformStatus())
 	}))
-	mux.HandleFunc("POST /api/mode", api(token, func(w http.ResponseWriter, r *http.Request) error {
-		var body struct {
-			Mode string `json:"mode"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if err := platformSetMode(normalizeMode(body.Mode)); err != nil {
-			return err
-		}
-		return writeJSON(w, platformStatus())
-	}))
 	mux.HandleFunc("POST /api/remove", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		if err := platformRemove(); err != nil {
 			return err
 		}
 		return writeJSON(w, platformStatus())
-	}))
-	mux.HandleFunc("GET /api/check", api(token, func(w http.ResponseWriter, r *http.Request) error {
-		return writeJSON(w, connectivityCheck())
 	}))
 	mux.HandleFunc("POST /api/telegram/connect", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		if err := platformConnectTelegram(); err != nil {

@@ -53,8 +53,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Test
-        run: go test ./...
       - uses: actions/download-artifact@v4
         with:
           name: tgws-windows
@@ -67,6 +65,8 @@ jobs:
         run: |
           install -m 0644 .artifacts/windows/PrivetTgWs.exe payload/windows/PrivetTgWs.exe
           install -m 0755 .artifacts/linux/PrivetTgWs payload/linux/PrivetTgWs
+      - name: Test
+        run: go test ./...
       - name: Build
         run: |
           mkdir -p dist
