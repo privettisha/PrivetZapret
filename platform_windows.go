@@ -1,0 +1,264 @@
+//go:build windows
+
+package main
+
+import (
+	"embed"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
+)
+
+//go:embed payload/windows/*
+var windowsPayload embed.FS
+
+var windowsFiles = []string{"winws2.exe", "WinDivert.dll", "WinDivert64.sys", "cygwin1.dll"}
+
+func windowsInstallDir() string {
+	base := os.Getenv("ProgramData")
+	if base == "" {
+		base = `C:\ProgramData`
+	}
+	return filepath.Join(base, appName)
+}
+
+func windowsConfigPath() string { return filepath.Join(windowsInstallDir(), "config.json") }
+
+func platformHandleSpecialMode() bool {
+	if len(os.Args) > 1 && os.Args[1] == "--service" {
+		if err := svc.Run(serviceName, &zapretService{}); err != nil {
+			fmt.Fprintln(os.Stderr, "PrivetZapret service:", err)
+		}
+		return true
+	}
+	return false
+}
+
+func platformIsAdministrator() bool {
+	proc := windows.NewLazySystemDLL("shell32.dll").NewProc("IsUserAnAdmin")
+	r, _, _ := proc.Call()
+	return r != 0
+}
+
+func platformRelaunchElevated() {
+	path, err := os.Executable()
+	if err != nil {
+		return
+	}
+	verb, _ := windows.UTF16PtrFromString("runas")
+	exe, _ := windows.UTF16PtrFromString(path)
+	params, _ := windows.UTF16PtrFromString(strings.Join(os.Args[1:], " "))
+	proc := windows.NewLazySystemDLL("shell32.dll").NewProc("ShellExecuteW")
+	_, _, _ = proc.Call(0, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(exe)), uintptr(unsafe.Pointer(params)), 0, 1)
+}
+
+func platformStatus() Status {
+	installed, active := false, false
+	m, err := mgr.Connect()
+	if err == nil {
+		defer m.Disconnect()
+		if s, e := m.OpenService(serviceName); e == nil {
+			installed = true
+			if q, e := s.Query(); e == nil {
+				active = q.State == svc.Running || q.State == svc.StartPending
+			}
+			s.Close()
+		}
+	}
+	return Status{Installed: installed, Active: active, Mode: loadConfig(windowsConfigPath()).Mode, Platform: "Windows · " + runtime.GOARCH}
+}
+
+func platformInstall(mode string) error {
+	dir := windowsInstallDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	if err := extractCommon(dir); err != nil {
+		return err
+	}
+	for _, name := range windowsFiles {
+		b, err := windowsPayload.ReadFile("payload/windows/" + name)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0644); err != nil {
+			return err
+		}
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	dst := filepath.Join(dir, appName+".exe")
+	if !strings.EqualFold(filepath.Clean(self), dst) {
+		b, err := os.ReadFile(self)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, b, 0755); err != nil {
+			return err
+		}
+	}
+	if err := saveConfig(windowsConfigPath(), mode); err != nil {
+		return err
+	}
+
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		s, err = m.CreateService(serviceName, dst, mgr.Config{
+			DisplayName: "PrivetZapret",
+			Description: "YouTube and Discord connectivity",
+			StartType:   mgr.StartAutomatic,
+		}, "--service")
+		if err != nil {
+			return fmt.Errorf("создание службы: %w", err)
+		}
+	}
+	defer s.Close()
+	if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
+		return fmt.Errorf("запуск службы: %w", err)
+	}
+	return waitWindowsState(s, svc.Running, 8*time.Second)
+}
+
+func platformStart() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return errors.New("сначала установите PrivetZapret")
+	}
+	defer s.Close()
+	if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
+		return err
+	}
+	return waitWindowsState(s, svc.Running, 8*time.Second)
+}
+
+func platformStop() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return nil
+	}
+	defer s.Close()
+	q, err := s.Query()
+	if err == nil && q.State == svc.Stopped {
+		return nil
+	}
+	if _, err := s.Control(svc.Stop); err != nil && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+		return err
+	}
+	return waitWindowsState(s, svc.Stopped, 8*time.Second)
+}
+
+func platformSetMode(mode string) error {
+	wasActive := platformStatus().Active
+	if wasActive {
+		_ = platformStop()
+	}
+	if err := saveConfig(windowsConfigPath(), mode); err != nil {
+		return err
+	}
+	if wasActive {
+		return platformStart()
+	}
+	return nil
+}
+
+func platformRemove() error {
+	_ = platformStop()
+	m, err := mgr.Connect()
+	if err == nil {
+		if s, e := m.OpenService(serviceName); e == nil {
+			_ = s.Delete()
+			s.Close()
+		}
+		m.Disconnect()
+	}
+	time.Sleep(250 * time.Millisecond)
+	return os.RemoveAll(windowsInstallDir())
+}
+
+func waitWindowsState(s *mgr.Service, wanted svc.State, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		q, err := s.Query()
+		if err == nil && q.State == wanted {
+			return nil
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return errors.New("служба не ответила вовремя")
+}
+
+type zapretService struct{}
+
+func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
+	changes <- svc.Status{State: svc.StartPending}
+	dir := windowsInstallDir()
+	args := []string{
+		"--wf-tcp-out=443",
+		"--wf-raw-part=@" + filepath.Join(dir, "windivert_part.discord_media.txt"),
+		"--wf-raw-part=@" + filepath.Join(dir, "windivert_part.quic_initial_ietf.txt"),
+	}
+	args = append(args, strategyArgs(dir, loadConfig(windowsConfigPath()).Mode)...)
+	cmd := exec.Command(filepath.Join(dir, "winws2.exe"), args...)
+	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Start(); err != nil {
+		return false, 1
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	for {
+		select {
+		case <-done:
+			changes <- svc.Status{State: svc.Stopped}
+			return false, 2
+		case c := <-requests:
+			switch c.Cmd {
+			case svc.Interrogate:
+				changes <- c.CurrentStatus
+			case svc.Stop, svc.Shutdown:
+				changes <- svc.Status{State: svc.StopPending}
+				_ = cmd.Process.Kill()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+				}
+				changes <- svc.Status{State: svc.Stopped}
+				return false, 0
+			}
+		}
+	}
+}
+
+func platformOpenBrowser(url string) {
+	_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+}

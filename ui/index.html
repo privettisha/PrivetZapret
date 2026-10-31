@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PrivetZapret</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand"><span class="brand-mark">P</span><span>PrivetZapret</span></div>
+      <span class="platform" id="platform">Windows / Arch</span>
+    </header>
+
+    <section class="hero">
+      <div class="orb" id="orb"><span></span></div>
+      <div class="state" id="state">Проверяем состояние…</div>
+      <div class="subtitle" id="subtitle">Только YouTube и Discord. Остальной трафик не меняется.</div>
+      <button class="primary" id="mainButton" disabled>Подождите</button>
+    </section>
+
+    <section class="card">
+      <div class="card-title"><div><h2>Режим работы</h2><p>Начните со сбалансированного</p></div></div>
+      <div class="modes" id="modes">
+        <button data-mode="compatible"><b>Совместимый</b><small>Для нестабильных сетей</small></button>
+        <button data-mode="balanced" class="selected"><b>Сбалансированный</b><small>Рекомендуется</small></button>
+        <button data-mode="strong"><b>Усиленный</b><small>Если обычный не помог</small></button>
+      </div>
+    </section>
+
+    <section class="services">
+      <div><span class="service-icon youtube">▶</span><p><b>YouTube</b><small id="youtubeState">Готов к работе</small></p></div>
+      <div><span class="service-icon discord">⌁</span><p><b>Discord</b><small id="discordState">Готов к работе</small></p></div>
+      <button class="check" id="checkButton">Проверить</button>
+    </section>
+
+    <footer>
+      <span>Автозапуск включается при установке</span>
+      <button id="removeButton" class="link" hidden>Удалить</button>
+    </footer>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
