@@ -245,11 +245,12 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	dir := windowsInstallDir()
 	engineDir := windowsEngineDir()
 	args := []string{
-		"--wf-tcp-out=443",
+		"--wf-tcp-out=443,2053,2083,2087,2096,8443",
+		"--wf-udp-out=443,19294-19344,50000-50100",
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.discord_media.txt"),
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.quic_initial_ietf.txt"),
 	}
-	args = append(args, strategyArgs(engineDir, loadConfig(windowsConfigPath()).Mode)...)
+	args = append(args, strategyArgs(engineDir, "balanced")...)
 	zapCmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)
 	zapCmd.Dir = engineDir
 	zapCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}

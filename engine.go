@@ -79,7 +79,10 @@ func strategyArgs(dir, mode string) []string {
 		fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
 		"--new",
 
-		"--filter-tcp=443", "--filter-l7=tls", "--hostlist=" + p("discord.txt"), "--out-range=-d10",
+		// Discord falls back to these HTTPS ports for media and gateway
+		// connections.  Limiting the profile to 443 leaves the desktop client
+		// waiting forever on networks where that fallback is used.
+		"--filter-tcp=443,2053,2083,2087,2096,8443", "--filter-l7=tls", "--hostlist=" + p("discord.txt"), "--out-range=-d10",
 		"--payload=tls_client_hello",
 		fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d", repeats),
 		"--lua-desync=" + split,
@@ -90,13 +93,17 @@ func strategyArgs(dir, mode string) []string {
 		fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
 		"--new",
 
+		// Voice and the initial Discord UDP discovery message do not carry a
+		// hostname, so they need their own narrow port/protocol profile.
+		"--filter-udp=19294-19344,50000-50100", "--filter-l7=stun,discord",
+		"--payload=stun,discord_ip_discovery",
+		"--lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=6",
+		"--new",
+
 		"--filter-tcp=443", "--filter-l7=tls", "--hostlist=" + p("telegram.txt"), "--out-range=-d10",
 		"--payload=tls_client_hello",
 		fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d", repeats),
 		"--lua-desync=" + split,
 		"--new",
-
-		"--filter-l7=discord", "--payload=discord_ip_discovery",
-		"--lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=2",
 	}
 }
