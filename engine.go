@@ -51,7 +51,7 @@ func writeFileIfChanged(path string, data []byte, mode os.FileMode) error {
 	return os.WriteFile(path, data, mode)
 }
 
-func strategyArgs(dir, mode string) []string {
+func strategyArgs(dir, mode string, services []string) []string {
 	repeats := 11
 	split := "multidisorder:pos=1,midsld"
 	switch normalizeMode(mode) {
@@ -62,48 +62,76 @@ func strategyArgs(dir, mode string) []string {
 		repeats = 15
 	}
 	p := func(name string) string { return filepath.Join(dir, name) }
-	return []string{
+	args := []string{
 		"--lua-init=@" + p("zapret-lib.lua"),
 		"--lua-init=@" + p("zapret-antidpi.lua"),
 		"--lua-init=fake_default_tls = tls_mod(fake_default_tls,'rnd,rndsni')",
 		"--blob=quic_google:" + p("quic_initial_www_google_com.bin"),
-
-		"--filter-tcp=443", "--filter-l7=tls", "--hostlist=" + p("youtube.txt"), "--out-range=-d10",
-		"--payload=tls_client_hello",
-		fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats),
-		"--lua-desync=" + split,
-		"--new",
-
-		"--filter-udp=443", "--filter-l7=quic", "--hostlist=" + p("youtube.txt"),
-		"--payload=quic_initial",
-		fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
-		"--new",
-
-		// Discord falls back to these HTTPS ports for media and gateway
-		// connections.  Limiting the profile to 443 leaves the desktop client
-		// waiting forever on networks where that fallback is used.
-		"--filter-tcp=443,2053,2083,2087,2096,8443", "--filter-l7=tls", "--hostlist=" + p("discord.txt"), "--out-range=-d10",
-		"--payload=tls_client_hello",
-		fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d", repeats),
-		"--lua-desync=" + split,
-		"--new",
-
-		"--filter-udp=443", "--filter-l7=quic", "--hostlist=" + p("discord.txt"),
-		"--payload=quic_initial",
-		fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
-		"--new",
-
-		// Voice and the initial Discord UDP discovery message do not carry a
-		// hostname, so they need their own narrow port/protocol profile.
-		"--filter-udp=19294-19344,50000-50100", "--filter-l7=stun,discord",
-		"--payload=stun,discord_ip_discovery",
-		"--lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=6",
-		"--new",
-
-		"--filter-tcp=443", "--filter-l7=tls", "--hostlist=" + p("telegram.txt"), "--out-range=-d10",
-		"--payload=tls_client_hello",
-		fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d", repeats),
-		"--lua-desync=" + split,
-		"--new",
 	}
+	if hasService(services, "youtube") {
+		args = append(args,
+			"--filter-tcp=443", "--filter-l7=tls", "--hostlist="+p("selected-youtube.txt"), "--out-range=-d10",
+			"--payload=tls_client_hello",
+			fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats),
+			"--lua-desync="+split,
+			"--new",
+
+			"--filter-udp=443", "--filter-l7=quic", "--hostlist="+p("selected-youtube.txt"),
+			"--payload=quic_initial",
+			fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
+			"--new")
+	}
+	if hasService(services, "discord") {
+		args = append(args,
+			// Discord falls back to these HTTPS ports for media and gateway
+			// connections.  Limiting the profile to 443 leaves the desktop client
+			// waiting forever on networks where that fallback is used.
+			"--filter-tcp=443,2053,2083,2087,2096,8443", "--filter-l7=tls", "--hostlist="+p("selected-discord.txt"), "--out-range=-d10",
+			"--payload=tls_client_hello",
+			fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d", repeats),
+			"--lua-desync="+split,
+			"--new",
+
+			"--filter-udp=443", "--filter-l7=quic", "--hostlist="+p("selected-discord.txt"),
+			"--payload=quic_initial",
+			fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
+			"--new",
+
+			// Voice and the initial Discord UDP discovery message do not carry a
+			// hostname, so they need their own narrow port/protocol profile.
+			"--filter-udp=19294-19344,50000-50100", "--filter-l7=stun,discord",
+			"--payload=stun,discord_ip_discovery",
+			"--lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=6",
+			"--new")
+	}
+	if hasService(services, "telegram") {
+		args = append(args,
+			"--filter-tcp=443", "--filter-l7=tls", "--hostlist="+p("selected-telegram.txt"), "--out-range=-d10",
+			"--payload=tls_client_hello",
+			fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d", repeats),
+			"--lua-desync="+split,
+			"--new")
+	}
+	if hasGenericServices(services) {
+		args = append(args,
+			"--filter-tcp=443", "--filter-l7=tls", "--hostlist="+p("selected-generic.txt"), "--out-range=-d10",
+			"--payload=tls_client_hello",
+			fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d", repeats),
+			"--lua-desync="+split,
+			"--new",
+			"--filter-udp=443", "--filter-l7=quic", "--hostlist="+p("selected-generic.txt"),
+			"--payload=quic_initial",
+			fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
+			"--new")
+	}
+	return args
+}
+
+func hasGenericServices(services []string) bool {
+	for _, id := range normalizeServices(services) {
+		if id != "youtube" && id != "discord" && id != "telegram" {
+			return true
+		}
+	}
+	return false
 }

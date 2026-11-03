@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -57,6 +58,23 @@ func main() {
 	}))
 	mux.HandleFunc("POST /api/remove", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		if err := platformRemove(); err != nil {
+			return err
+		}
+		return writeJSON(w, platformStatus())
+	}))
+	mux.HandleFunc("POST /api/services", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		var request struct {
+			Services []string `json:"services"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 32<<10))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			return fmt.Errorf("не удалось прочитать список сервисов")
+		}
+		if len(normalizeServices(request.Services)) == 0 {
+			return fmt.Errorf("выберите хотя бы один сервис")
+		}
+		if err := platformSetServices(request.Services); err != nil {
 			return err
 		}
 		return writeJSON(w, platformStatus())

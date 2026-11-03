@@ -85,7 +85,8 @@ func platformStatus() Status {
 			s.Close()
 		}
 	}
-	return Status{Installed: installed, Active: active, Mode: loadConfig(windowsConfigPath()).Mode, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && telegramProxyReady()}
+	cfg := loadConfig(windowsConfigPath())
+	return Status{Installed: installed, Active: active, Mode: cfg.Mode, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}
 }
 
 func platformInstall(mode string) error {
@@ -144,7 +145,7 @@ func platformInstall(mode string) error {
 	if err != nil {
 		s, err = m.CreateService(serviceName, dst, mgr.Config{
 			DisplayName: "PrivetZapret",
-			Description: "YouTube, Discord and Telegram connectivity",
+			Description: "Selected service connectivity",
 			StartType:   mgr.StartAutomatic,
 		}, "--service")
 		if err != nil {
@@ -212,6 +213,22 @@ func platformSetMode(mode string) error {
 	return nil
 }
 
+func platformSetServices(services []string) error {
+	wasActive := platformStatus().Active
+	if wasActive {
+		if err := platformStop(); err != nil {
+			return err
+		}
+	}
+	if err := saveServices(windowsConfigPath(), services); err != nil {
+		return err
+	}
+	if wasActive {
+		return platformStart()
+	}
+	return nil
+}
+
 func platformRemove() error {
 	_ = platformStop()
 	m, err := mgr.Connect()
@@ -244,49 +261,67 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	changes <- svc.Status{State: svc.StartPending}
 	dir := windowsInstallDir()
 	engineDir := windowsEngineDir()
+	cfg := loadConfig(windowsConfigPath())
+	if len(cfg.Services) == 0 {
+		return false, 4
+	}
+	if err := writeSelectedHostlists(engineDir, cfg.Services); err != nil {
+		return false, 4
+	}
 	args := []string{
 		"--wf-tcp-out=443,2053,2083,2087,2096,8443",
 		"--wf-udp-out=443,19294-19344,50000-50100",
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.discord_media.txt"),
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.quic_initial_ietf.txt"),
 	}
-	args = append(args, strategyArgs(engineDir, "balanced")...)
+	args = append(args, strategyArgs(engineDir, cfg.Mode, cfg.Services)...)
 	zapCmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)
 	zapCmd.Dir = engineDir
 	zapCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	cfg := loadConfig(windowsConfigPath())
-	tgCmd := exec.Command(filepath.Join(engineDir, "PrivetTgWs.exe"),
-		"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
-		"--log-file", filepath.Join(dir, "telegram.log"),
-		"--log-max-mb", "3", "--log-backups", "1")
-	tgCmd.Dir = engineDir
-	tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
-	tgCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	var tgCmd *exec.Cmd
+	var tgDone chan error
+	if hasService(cfg.Services, "telegram") {
+		tgCmd = exec.Command(filepath.Join(engineDir, "PrivetTgWs.exe"),
+			"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
+			"--log-file", filepath.Join(dir, "telegram.log"),
+			"--log-max-mb", "3", "--log-backups", "1")
+		tgCmd.Dir = engineDir
+		tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
+		tgCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	}
 	logFile, _ := os.OpenFile(filepath.Join(dir, "service.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if logFile != nil {
 		defer logFile.Close()
 		zapCmd.Stdout, zapCmd.Stderr = logFile, logFile
-		tgCmd.Stdout, tgCmd.Stderr = logFile, logFile
+		if tgCmd != nil {
+			tgCmd.Stdout, tgCmd.Stderr = logFile, logFile
+		}
 	} else {
 		zapCmd.Stdout, zapCmd.Stderr = os.Stdout, os.Stderr
-		tgCmd.Stdout, tgCmd.Stderr = os.Stdout, os.Stderr
+		if tgCmd != nil {
+			tgCmd.Stdout, tgCmd.Stderr = os.Stdout, os.Stderr
+		}
 	}
 	if err := zapCmd.Start(); err != nil {
 		return false, 1
 	}
 	zapDone := make(chan error, 1)
 	go func() { zapDone <- zapCmd.Wait() }()
-	if err := tgCmd.Start(); err != nil {
-		_ = zapCmd.Process.Kill()
-		<-zapDone
-		return false, 3
+	if tgCmd != nil {
+		if err := tgCmd.Start(); err != nil {
+			_ = zapCmd.Process.Kill()
+			<-zapDone
+			return false, 3
+		}
+		tgDone = make(chan error, 1)
+		go func() { tgDone <- tgCmd.Wait() }()
 	}
-	tgDone := make(chan error, 1)
-	go func() { tgDone <- tgCmd.Wait() }()
 	select {
 	case <-zapDone:
-		_ = tgCmd.Process.Kill()
-		<-tgDone
+		if tgCmd != nil {
+			_ = tgCmd.Process.Kill()
+			<-tgDone
+		}
 		changes <- svc.Status{State: svc.Stopped}
 		return false, 2
 	case <-tgDone:
@@ -300,8 +335,10 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	for {
 		select {
 		case <-zapDone:
-			_ = tgCmd.Process.Kill()
-			<-tgDone
+			if tgCmd != nil {
+				_ = tgCmd.Process.Kill()
+				<-tgDone
+			}
 			changes <- svc.Status{State: svc.Stopped}
 			return false, 2
 		case <-tgDone:
@@ -316,8 +353,10 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 			case svc.Stop, svc.Shutdown:
 				changes <- svc.Status{State: svc.StopPending}
 				_ = zapCmd.Process.Kill()
-				_ = tgCmd.Process.Kill()
-				for i := 0; i < 2; i++ {
+				if tgCmd != nil {
+					_ = tgCmd.Process.Kill()
+				}
+				for zapDone != nil || tgDone != nil {
 					select {
 					case <-zapDone:
 						zapDone = nil

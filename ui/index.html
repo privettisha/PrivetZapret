@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f4f6f5">
-  <title>PrivetZapret — YouTube, Discord и Telegram</title>
+  <title>PrivetZapret — выбранные сервисы</title>
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/catalog.css">
 </head>
 <body>
   <header class="site-header">
@@ -18,7 +19,7 @@
   <main>
     <section class="hero page-width" aria-labelledby="state">
       <div class="hero-copy">
-        <p class="intro-line"><span class="signal-dot" aria-hidden="true"></span> YouTube · Discord · Telegram</p>
+        <p class="intro-line"><span class="signal-dot" aria-hidden="true"></span> Выборочная обработка соединений</p>
         <h1 id="state">Проверяем состояние…</h1>
         <p class="hero-description" id="subtitle">Только выбранные сервисы. Остальной трафик идёт напрямую.</p>
         <div class="hero-actions"><button class="primary" id="mainButton" disabled>Подождите</button></div>
@@ -29,7 +30,7 @@
         <div class="route-flow">
           <div class="route-origin"><span class="route-node device-node"><i></i></span><strong>Ваш компьютер</strong><small>обычное подключение</small></div>
           <div class="route-spine" aria-hidden="true"><span></span></div>
-          <div class="route-destination"><span class="route-node service-node"><i></i><i></i><i></i></span><strong>YouTube · Discord · Telegram</strong><small>локальная обработка</small></div>
+          <div class="route-destination"><span class="route-node service-node"><i></i><i></i><i></i></span><strong id="routeServices">Выбранные сервисы</strong><small>локальная обработка</small></div>
         </div>
         <div class="route-result"><div class="orb" id="orb"><span></span></div><div><strong>Только нужные соединения</strong><span>Данные не отправляются через сторонний VPN или прокси.</span></div></div>
         <div class="route-bottom"><span>Windows 10/11 · Arch Linux</span><span>≠ VPN</span></div>
@@ -38,13 +39,21 @@
     <section class="control-section">
       <div class="page-width control-grid">
         <section class="services-panel" aria-labelledby="services-title">
-          <div class="section-heading"><div><p class="section-marker">PrivetZapret</p><h2 id="services-title">Сервисы</h2></div><p>Включаются и выключаются одной кнопкой.</p></div>
-          <div class="service-list">
-            <div><span class="service-number">01</span><p><b>YouTube</b><small id="youtubeState">Запустится вместе с PrivetZapret</small></p><span class="service-dot" aria-hidden="true"></span></div>
-            <div><span class="service-number">02</span><p><b>Discord</b><small id="discordState">Запустится вместе с PrivetZapret</small></p><span class="service-dot" aria-hidden="true"></span></div>
-            <div><span class="service-number">03</span><p><b>Telegram Desktop</b><small id="telegramState">Локальный прокси запустится вместе с PrivetZapret</small></p><span class="service-dot" aria-hidden="true"></span></div>
+          <div class="section-heading"><div><p class="section-marker">PrivetZapret</p><h2 id="services-title">Сервисы</h2></div><p><b id="selectedCount">0 выбрано</b><br>Остальной трафик не изменяется.</p></div>
+          <div class="catalog-tools">
+            <label class="catalog-search"><span>Поиск</span><input id="serviceSearch" type="search" placeholder="Название сервиса" autocomplete="off"></label>
+            <div class="catalog-presets" aria-label="Быстрый выбор">
+              <button type="button" data-preset="default">Основные</button>
+              <button type="button" data-preset="all">Выбрать все</button>
+              <button type="button" data-preset="reset">Сбросить</button>
+            </div>
           </div>
-          <button class="check connect" id="telegramButton">Подключить в Telegram <span aria-hidden="true">↗</span></button>
+          <div class="service-catalog" id="serviceCatalog"></div>
+          <div class="catalog-actions">
+            <button class="primary apply-services" id="applyServices" disabled>Изменений нет</button>
+            <button class="check connect" id="telegramButton">Подключить в Telegram <span aria-hidden="true">↗</span></button>
+          </div>
+          <p class="catalog-note">Настройка работает локально и не меняет страну аккаунта или внешний IP.</p>
         </section>
       </div>
     </section>

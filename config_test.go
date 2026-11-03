@@ -39,3 +39,32 @@ func TestTelegramProxyURLIsLocal(t *testing.T) {
 		t.Fatalf("unexpected Telegram URL: %s", url)
 	}
 }
+
+func TestOldConfigGetsSafeDefaultServices(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"mode":"balanced"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadConfig(path)
+	if strings.Join(cfg.Services, ",") != "youtube,discord,telegram" {
+		t.Fatalf("unexpected defaults: %#v", cfg.Services)
+	}
+}
+
+func TestServiceSelectionIsNormalizedAndPreserved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := saveServices(path, []string{"reddit", "youtube", "reddit", "unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadConfig(path)
+	if strings.Join(cfg.Services, ",") != "youtube,reddit" {
+		t.Fatalf("unexpected selection: %#v", cfg.Services)
+	}
+	if err := saveConfig(path, "strong"); err != nil {
+		t.Fatal(err)
+	}
+	cfg = loadConfig(path)
+	if cfg.Mode != "strong" || strings.Join(cfg.Services, ",") != "youtube,reddit" {
+		t.Fatalf("settings were not preserved: %#v", cfg)
+	}
+}

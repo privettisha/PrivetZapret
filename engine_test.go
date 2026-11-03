@@ -26,11 +26,49 @@ func TestStrategiesAcceptedByZapret2(t *testing.T) {
 	}
 	for _, mode := range []string{"compatible", "balanced", "strong"} {
 		t.Run(mode, func(t *testing.T) {
-			args := append([]string{"--dry-run", "--qnum=300"}, strategyArgs(dir, mode)...)
+			if err := writeSelectedHostlists(dir, defaultServices()); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string{"--dry-run", "--qnum=300"}, strategyArgs(dir, mode, defaultServices())...)
 			if out, err := exec.Command(engine, args...).CombinedOutput(); err != nil {
 				t.Fatalf("zapret2 rejected strategy: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+func TestFullCatalogStrategyAcceptedByZapret2(t *testing.T) {
+	dir := t.TempDir()
+	if err := extractCommon(dir); err != nil {
+		t.Fatal(err)
+	}
+	engine := filepath.Join(dir, "nfqws2")
+	b, err := os.ReadFile("payload/linux/nfqws2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(engine, b, 0755); err != nil {
+		t.Fatal(err)
+	}
+	var all []string
+	for _, service := range serviceCatalog {
+		all = append(all, service.ID)
+	}
+	if err := writeSelectedHostlists(dir, all); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"--dry-run", "--qnum=300"}, strategyArgs(dir, "balanced", all)...)
+	if out, err := exec.Command(engine, args...).CombinedOutput(); err != nil {
+		t.Fatalf("zapret2 rejected full catalogue: %v\n%s", err, out)
+	}
+	generic, err := os.ReadFile(filepath.Join(dir, "selected-generic.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"instagram.com", "reddit.com", "twitch.tv", "soundcloud.com"} {
+		if !bytes.Contains(generic, []byte(expected+"\n")) {
+			t.Fatalf("generic hostlist is missing %s", expected)
+		}
 	}
 }
 

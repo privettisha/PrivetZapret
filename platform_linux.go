@@ -54,7 +54,8 @@ func platformStatus() Status {
 	_, statErr := os.Stat(linuxUnitPath)
 	active := exec.Command("systemctl", "is-active", "--quiet", "privetzapret.service").Run() == nil
 	installed := statErr == nil
-	return Status{Installed: installed, Active: active, Mode: loadConfig(linuxConfigPath()).Mode, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && telegramProxyReady()}
+	cfg := loadConfig(linuxConfigPath())
+	return Status{Installed: installed, Active: active, Mode: cfg.Mode, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}
 }
 
 func platformInstall(mode string) error {
@@ -110,7 +111,7 @@ func platformInstall(mode string) error {
 		return err
 	}
 	unit := `[Unit]
-Description=PrivetZapret for YouTube, Discord and Telegram
+Description=PrivetZapret selected service connectivity
 After=network-online.target
 Wants=network-online.target
 
@@ -166,6 +167,22 @@ func platformSetMode(mode string) error {
 	return nil
 }
 
+func platformSetServices(services []string) error {
+	wasActive := platformStatus().Active
+	if wasActive {
+		if err := platformStop(); err != nil {
+			return err
+		}
+	}
+	if err := saveServices(linuxConfigPath(), services); err != nil {
+		return err
+	}
+	if wasActive {
+		return platformStart()
+	}
+	return nil
+}
+
 func platformRemove() error {
 	_ = platformStop()
 	_ = exec.Command("systemctl", "disable", "privetzapret.service").Run()
@@ -180,7 +197,14 @@ func runLinuxDaemon() error {
 		return errors.New("службе нужны права root")
 	}
 	_ = deleteNftTable()
-	args := append([]string{"--qnum=300"}, strategyArgs(linuxInstallDir, "balanced")...)
+	cfg := loadConfig(linuxConfigPath())
+	if len(cfg.Services) == 0 {
+		return errors.New("не выбран ни один сервис")
+	}
+	if err := writeSelectedHostlists(linuxInstallDir, cfg.Services); err != nil {
+		return err
+	}
+	args := append([]string{"--qnum=300"}, strategyArgs(linuxInstallDir, cfg.Mode, cfg.Services)...)
 	cmd := exec.Command(filepath.Join(linuxInstallDir, "nfqws2"), args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -188,30 +212,35 @@ func runLinuxDaemon() error {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	cfg := loadConfig(linuxConfigPath())
-	if cfg.TelegramSecret == "" {
+	if hasService(cfg.Services, "telegram") && cfg.TelegramSecret == "" {
 		_ = cmd.Process.Kill()
 		<-done
 		return errors.New("не создан локальный ключ Telegram")
 	}
-	tgCmd := exec.Command(filepath.Join(linuxInstallDir, "PrivetTgWs"),
-		"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
-		"--log-file", filepath.Join(linuxInstallDir, "telegram.log"),
-		"--log-max-mb", "3", "--log-backups", "1")
-	tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
-	tgCmd.Stdout, tgCmd.Stderr = os.Stdout, os.Stderr
-	if err := tgCmd.Start(); err != nil {
-		_ = cmd.Process.Kill()
-		<-done
-		return fmt.Errorf("telegram proxy: %w", err)
+	var tgCmd *exec.Cmd
+	var tgDone chan error
+	if hasService(cfg.Services, "telegram") {
+		tgCmd = exec.Command(filepath.Join(linuxInstallDir, "PrivetTgWs"),
+			"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
+			"--log-file", filepath.Join(linuxInstallDir, "telegram.log"),
+			"--log-max-mb", "3", "--log-backups", "1")
+		tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
+		tgCmd.Stdout, tgCmd.Stderr = os.Stdout, os.Stderr
+		if err := tgCmd.Start(); err != nil {
+			_ = cmd.Process.Kill()
+			<-done
+			return fmt.Errorf("telegram proxy: %w", err)
+		}
+		tgDone = make(chan error, 1)
+		go func() { tgDone <- tgCmd.Wait() }()
 	}
-	tgDone := make(chan error, 1)
-	go func() { tgDone <- tgCmd.Wait() }()
 
 	select {
 	case err := <-done:
-		_ = tgCmd.Process.Kill()
-		<-tgDone
+		if tgCmd != nil {
+			_ = tgCmd.Process.Kill()
+			<-tgDone
+		}
 		return fmt.Errorf("движок завершился: %w", err)
 	case err := <-tgDone:
 		_ = cmd.Process.Kill()
@@ -221,14 +250,20 @@ func runLinuxDaemon() error {
 	}
 	if err := applyNftTable(); err != nil {
 		_ = cmd.Process.Kill()
-		_ = tgCmd.Process.Kill()
+		if tgCmd != nil {
+			_ = tgCmd.Process.Kill()
+		}
 		<-done
-		<-tgDone
+		if tgDone != nil {
+			<-tgDone
+		}
 		return err
 	}
 	defer func() {
 		_ = cmd.Process.Kill()
-		_ = tgCmd.Process.Kill()
+		if tgCmd != nil {
+			_ = tgCmd.Process.Kill()
+		}
 		_ = deleteNftTable()
 	}()
 
@@ -241,7 +276,9 @@ func runLinuxDaemon() error {
 		return fmt.Errorf("telegram proxy завершился: %w", err)
 	case <-sig:
 		_ = cmd.Process.Signal(syscall.SIGTERM)
-		_ = tgCmd.Process.Signal(syscall.SIGTERM)
+		if tgCmd != nil {
+			_ = tgCmd.Process.Signal(syscall.SIGTERM)
+		}
 		deadline := time.After(3 * time.Second)
 		for done != nil || tgDone != nil {
 			select {
@@ -251,7 +288,9 @@ func runLinuxDaemon() error {
 				tgDone = nil
 			case <-deadline:
 				_ = cmd.Process.Kill()
-				_ = tgCmd.Process.Kill()
+				if tgCmd != nil {
+					_ = tgCmd.Process.Kill()
+				}
 				return nil
 			}
 		}

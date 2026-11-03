@@ -14,23 +14,26 @@ import (
 const (
 	appName     = "PrivetZapret"
 	serviceName = "PrivetZapret"
-	appVersion  = "0.3.3"
+	appVersion  = "0.4.0"
 	tgProxyPort = 14430
 )
 
 type Config struct {
-	Mode           string `json:"mode"`
-	TelegramSecret string `json:"telegram_secret"`
+	Mode           string   `json:"mode"`
+	TelegramSecret string   `json:"telegram_secret"`
+	Services       []string `json:"services"`
 }
 
 type Status struct {
-	Installed     bool   `json:"installed"`
-	Active        bool   `json:"active"`
-	Mode          string `json:"mode"`
-	Platform      string `json:"platform"`
-	Message       string `json:"message,omitempty"`
-	NeedsUpdate   bool   `json:"needs_update"`
-	TelegramReady bool   `json:"telegram_ready"`
+	Installed     bool                `json:"installed"`
+	Active        bool                `json:"active"`
+	Mode          string              `json:"mode"`
+	Platform      string              `json:"platform"`
+	Message       string              `json:"message,omitempty"`
+	NeedsUpdate   bool                `json:"needs_update"`
+	TelegramReady bool                `json:"telegram_ready"`
+	Services      []string            `json:"services"`
+	Catalog       []ServiceDefinition `json:"catalog"`
 }
 
 func installedVersion(path string) string {
@@ -58,12 +61,30 @@ func loadConfig(path string) Config {
 	}
 	cfg.Mode = normalizeMode(cfg.Mode)
 	cfg.TelegramSecret = normalizeTelegramSecret(cfg.TelegramSecret)
+	if cfg.Services == nil {
+		cfg.Services = defaultServices()
+	} else {
+		cfg.Services = normalizeServices(cfg.Services)
+	}
 	return cfg
 }
 
 func saveConfig(path, mode string) error {
 	cfg := loadConfig(path)
 	cfg.Mode = normalizeMode(mode)
+	return saveConfigValue(path, cfg)
+}
+
+func saveServices(path string, services []string) error {
+	cfg := loadConfig(path)
+	cfg.Services = normalizeServices(services)
+	if len(cfg.Services) == 0 {
+		return fmt.Errorf("выберите хотя бы один сервис")
+	}
+	return saveConfigValue(path, cfg)
+}
+
+func saveConfigValue(path string, cfg Config) error {
 	if cfg.TelegramSecret == "" {
 		secret := make([]byte, 16)
 		if _, err := rand.Read(secret); err != nil {
