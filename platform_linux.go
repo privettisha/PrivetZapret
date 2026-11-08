@@ -302,6 +302,7 @@ func applyNftTable() error {
 	script := `table inet privetzapret {
   chain postrouting {
     type filter hook postrouting priority 101; policy accept;
+    ip daddr { 2.26.225.138, 31.76.251.3 } accept
     meta mark and 0x40000000 == 0 meta l4proto tcp tcp dport { 443, 2053, 2083, 2087, 2096, 8443 } ct original packets 1-12 queue num 300 bypass
     meta mark and 0x40000000 == 0 meta l4proto udp udp dport { 443, 19294-19344, 50000-50100 } ct original packets 1-12 queue num 300 bypass
   }
