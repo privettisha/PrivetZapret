@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,6 +70,14 @@ func TestFullCatalogStrategyAcceptedByZapret2(t *testing.T) {
 		if !bytes.Contains(generic, []byte(expected+"\n")) {
 			t.Fatalf("generic hostlist is missing %s", expected)
 		}
+	}
+}
+
+func TestPrivetDNSProxyAddressesAreExcludedFromDesync(t *testing.T) {
+	args := strategyArgs(t.TempDir(), "balanced", defaultServices())
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--ipset-exclude-ip=2.26.225.138,31.76.251.3") {
+		t.Fatal("PrivetDNS PL WEB proxy addresses are not excluded from desync")
 	}
 }
 
