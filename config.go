@@ -14,26 +14,28 @@ import (
 const (
 	appName     = "PrivetZapret"
 	serviceName = "PrivetZapret"
-	appVersion  = "0.4.0"
+	appVersion  = "0.5.0"
 	tgProxyPort = 14430
 )
 
 type Config struct {
 	Mode           string   `json:"mode"`
+	YoutubeProfile string   `json:"youtube_profile"`
 	TelegramSecret string   `json:"telegram_secret"`
 	Services       []string `json:"services"`
 }
 
 type Status struct {
-	Installed     bool                `json:"installed"`
-	Active        bool                `json:"active"`
-	Mode          string              `json:"mode"`
-	Platform      string              `json:"platform"`
-	Message       string              `json:"message,omitempty"`
-	NeedsUpdate   bool                `json:"needs_update"`
-	TelegramReady bool                `json:"telegram_ready"`
-	Services      []string            `json:"services"`
-	Catalog       []ServiceDefinition `json:"catalog"`
+	Installed      bool                `json:"installed"`
+	Active         bool                `json:"active"`
+	Mode           string              `json:"mode"`
+	YoutubeProfile string              `json:"youtube_profile"`
+	Platform       string              `json:"platform"`
+	Message        string              `json:"message,omitempty"`
+	NeedsUpdate    bool                `json:"needs_update"`
+	TelegramReady  bool                `json:"telegram_ready"`
+	Services       []string            `json:"services"`
+	Catalog        []ServiceDefinition `json:"catalog"`
 }
 
 func installedVersion(path string) string {
@@ -53,13 +55,23 @@ func normalizeMode(mode string) string {
 	}
 }
 
+func normalizeYoutubeProfile(profile string) string {
+	switch profile {
+	case "standard", "split", "alternative", "tcp":
+		return profile
+	default:
+		return "standard"
+	}
+}
+
 func loadConfig(path string) Config {
-	cfg := Config{Mode: "balanced"}
+	cfg := Config{Mode: "balanced", YoutubeProfile: "standard"}
 	b, err := os.ReadFile(path)
 	if err == nil {
 		_ = json.Unmarshal(b, &cfg)
 	}
 	cfg.Mode = normalizeMode(cfg.Mode)
+	cfg.YoutubeProfile = normalizeYoutubeProfile(cfg.YoutubeProfile)
 	cfg.TelegramSecret = normalizeTelegramSecret(cfg.TelegramSecret)
 	if cfg.Services == nil {
 		cfg.Services = defaultServices()
@@ -81,6 +93,15 @@ func saveServices(path string, services []string) error {
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("выберите хотя бы один сервис")
 	}
+	return saveConfigValue(path, cfg)
+}
+
+func saveYoutubeProfile(path, profile string) error {
+	if normalizeYoutubeProfile(profile) != profile {
+		return fmt.Errorf("неизвестный профиль YouTube")
+	}
+	cfg := loadConfig(path)
+	cfg.YoutubeProfile = profile
 	return saveConfigValue(path, cfg)
 }
 

@@ -1,6 +1,6 @@
 const token=new URLSearchParams(location.search).get('token')||'';
 const $=s=>document.querySelector(s);
-let status=null,busy=false,dirty=false,draft=new Set(),search='';
+let status=null,busy=false,dirty=false,draft=new Set(),search='',diagnostics=null;
 
 async function api(path,options={}){
   const r=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Privet-Token':token,...options.headers}});
@@ -47,21 +47,43 @@ function render(s){
   const count=draft.size;$('#selectedCount').textContent=`${plural(count)} выбрано`;$('#routeServices').textContent=plural(count);
   orb.className='orb '+(s.active?'active':'inactive');
   if(!s.installed){$('#state').textContent='Готов к установке';$('#subtitle').textContent='Выберите нужные сервисы и установите приложение.';btn.textContent='Установить';btn.className='primary';$('#removeButton').hidden=true}
-  else if(s.needs_update){$('#state').textContent='Доступно обновление';$('#subtitle').textContent='Новая версия добавит каталог сервисов и сохранит настройки.';btn.textContent='Обновить';btn.className='primary';$('#removeButton').hidden=false}
+  else if(s.needs_update){$('#state').textContent='Доступно обновление';$('#subtitle').textContent='Настройки и ключ Telegram сохранятся.';btn.textContent='Обновить';btn.className='primary';$('#removeButton').hidden=false}
   else if(s.active){$('#state').textContent='Подключение активно';$('#subtitle').textContent=`Локально обрабатывается: ${plural((s.services||[]).length)}. Остальной трафик идёт напрямую.`;btn.textContent='Остановить';btn.className='primary stop';$('#removeButton').hidden=false}
   else{$('#state').textContent='Подключение остановлено';$('#subtitle').textContent='Выбор сохранён. Нажмите кнопку, чтобы снова включить.';btn.textContent='Запустить';btn.className='primary';$('#removeButton').hidden=false}
   btn.disabled=busy;
   apply.disabled=busy||!dirty;apply.textContent=dirty?'Применить выбор':'Изменений нет';
   const telegramSelected=draft.has('telegram');tg.hidden=!telegramSelected;tg.disabled=busy||!s.telegram_ready;
+  $('#youtubePanel').hidden=!draft.has('youtube');
+  $('#checkYouTube').disabled=busy||!s.active;
+  document.querySelectorAll('[data-youtube-profile]').forEach(button=>{
+    button.classList.toggle('selected',button.dataset.youtubeProfile===s.youtube_profile);
+    button.setAttribute('aria-pressed',String(button.dataset.youtubeProfile===s.youtube_profile));
+    button.disabled=busy||!s.installed;
+  });
+  renderDiagnostics();
   renderCatalog(s);
+}
+function renderDiagnostics(){
+  const root=$('#youtubeResults');root.textContent='';root.hidden=!diagnostics;
+  if(!diagnostics)return;
+  for(const [key,label] of [['youtube','Сайт'],['preview','Превью']]){
+    const check=diagnostics[key];
+    const row=document.createElement('div');row.className='diagnostic-row';
+    const name=document.createElement('span');name.textContent=label;
+    const value=document.createElement('strong');value.className=check?.reachable?'ok':'failed';
+    value.textContent=check?.reachable?(check.http_code>=400?`HTTP ${check.http_code}`:'Доступно'):(check?.error||'Нет соединения');
+    row.append(name,value);root.append(row);
+  }
 }
 async function refresh(){try{render(await api('/api/status'))}catch(e){toast(e.message)}}
 async function act(fn){if(busy)return;busy=true;if(status)render(status);try{await fn();await refresh()}catch(e){toast(e.message)}finally{busy=false;if(status)render(status)}}
 
-$('#mainButton').onclick=()=>act(async()=>{if(!status.installed||status.needs_update)await api('/api/install',{method:'POST'});else if(status.active)await api('/api/stop',{method:'POST'});else await api('/api/start',{method:'POST'})});
+$('#mainButton').onclick=()=>act(async()=>{if(!status.installed){await api('/api/install',{method:'POST'});if(dirty){await api('/api/services',{method:'POST',body:JSON.stringify({services:[...draft]})});dirty=false}}else if(status.needs_update)await api('/api/install',{method:'POST'});else if(status.active)await api('/api/stop',{method:'POST'});else await api('/api/start',{method:'POST'})});
 $('#removeButton').onclick=()=>{if(confirm('Удалить PrivetZapret и вернуть обычную работу сети?'))act(()=>api('/api/remove',{method:'POST'}))};
 $('#telegramButton').onclick=()=>act(async()=>{await api('/api/telegram/connect',{method:'POST'});toast('Подтвердите подключение в Telegram Desktop')});
 $('#applyServices').onclick=()=>act(async()=>{const next=[...draft];await api('/api/services',{method:'POST',body:JSON.stringify({services:next})});dirty=false;toast('Выбор применён')});
+document.querySelectorAll('[data-youtube-profile]').forEach(button=>button.onclick=()=>act(async()=>{if(button.dataset.youtubeProfile===status.youtube_profile)return;await api('/api/youtube/profile',{method:'POST',body:JSON.stringify({profile:button.dataset.youtubeProfile})});diagnostics=null}));
+$('#checkYouTube').onclick=()=>act(async()=>{diagnostics=await api('/api/diagnostics')});
 $('#serviceSearch').oninput=e=>{search=e.target.value;if(status)renderCatalog(status)};
 document.querySelectorAll('[data-preset]').forEach(button=>button.onclick=()=>{if(!status)return;const preset=button.dataset.preset;if(preset==='all')draft=new Set(status.catalog.map(item=>item.id));else if(preset==='default')draft=new Set(status.catalog.filter(item=>item.default).map(item=>item.id));else draft=new Set(status.services);dirty=!sameSelection(draft,status.services||[]);render(status)});
 refresh();

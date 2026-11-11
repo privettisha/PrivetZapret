@@ -51,7 +51,7 @@ func writeFileIfChanged(path string, data []byte, mode os.FileMode) error {
 	return os.WriteFile(path, data, mode)
 }
 
-func strategyArgs(dir, mode string, services []string) []string {
+func strategyArgs(dir, mode string, services []string, youtubeProfile ...string) []string {
 	repeats := 11
 	split := "multidisorder:pos=1,midsld"
 	proxyExcludes := "--ipset-exclude-ip=2.26.225.138,31.76.251.3"
@@ -70,16 +70,35 @@ func strategyArgs(dir, mode string, services []string) []string {
 		"--blob=quic_google:" + p("quic_initial_www_google_com.bin"),
 	}
 	if hasService(services, "youtube") {
+		profile := "standard"
+		if len(youtubeProfile) != 0 {
+			profile = normalizeYoutubeProfile(youtubeProfile[0])
+		}
+		youtubeFake := fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats)
+		youtubeSplit := split
+		quicDesync := fmt.Sprintf("fake:blob=quic_google:repeats=%d", repeats)
+		switch profile {
+		case "split":
+			youtubeFake = "fake:blob=fake_default_tls:tcp_md5:repeats=6:tls_mod=rnd,dupsid,sni=www.google.com"
+			youtubeSplit = "multisplit:pos=1,midsld"
+		case "alternative", "tcp":
+			youtubeFake = "fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=6"
+			youtubeSplit = "multidisorder:pos=midsld"
+			if profile == "tcp" {
+				// Only YouTube QUIC is dropped; browsers retry the same host over TCP.
+				quicDesync = "drop"
+			}
+		}
 		args = append(args,
 			"--filter-tcp=443", "--filter-l7=tls", proxyExcludes, "--hostlist="+p("selected-youtube.txt"), "--out-range=-d10",
 			"--payload=tls_client_hello",
-			fmt.Sprintf("--lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats),
-			"--lua-desync="+split,
+			"--lua-desync="+youtubeFake,
+			"--lua-desync="+youtubeSplit,
 			"--new",
 
 			"--filter-udp=443", "--filter-l7=quic", proxyExcludes, "--hostlist="+p("selected-youtube.txt"),
 			"--payload=quic_initial",
-			fmt.Sprintf("--lua-desync=fake:blob=quic_google:repeats=%d", repeats),
+			"--lua-desync="+quicDesync,
 			"--new")
 	}
 	if hasService(services, "discord") {

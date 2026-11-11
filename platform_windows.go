@@ -86,7 +86,7 @@ func platformStatus() Status {
 		}
 	}
 	cfg := loadConfig(windowsConfigPath())
-	return Status{Installed: installed, Active: active, Mode: cfg.Mode, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}
+	return Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}
 }
 
 func platformInstall(mode string) error {
@@ -229,6 +229,33 @@ func platformSetServices(services []string) error {
 	return nil
 }
 
+func platformSetYoutubeProfile(profile string) error {
+	if normalizeYoutubeProfile(profile) != profile {
+		return errors.New("неизвестный профиль YouTube")
+	}
+	previous := loadConfig(windowsConfigPath()).YoutubeProfile
+	wasActive := platformStatus().Active
+	if wasActive {
+		if err := platformStop(); err != nil {
+			return err
+		}
+	}
+	if err := saveYoutubeProfile(windowsConfigPath(), profile); err != nil {
+		if wasActive {
+			_ = platformStart()
+		}
+		return err
+	}
+	if wasActive {
+		if err := platformStart(); err != nil {
+			_ = saveYoutubeProfile(windowsConfigPath(), previous)
+			_ = platformStart()
+			return err
+		}
+	}
+	return nil
+}
+
 func platformRemove() error {
 	_ = platformStop()
 	m, err := mgr.Connect()
@@ -274,7 +301,7 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.discord_media.txt"),
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.quic_initial_ietf.txt"),
 	}
-	args = append(args, strategyArgs(engineDir, cfg.Mode, cfg.Services)...)
+	args = append(args, strategyArgs(engineDir, cfg.Mode, cfg.Services, cfg.YoutubeProfile)...)
 	zapCmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)
 	zapCmd.Dir = engineDir
 	zapCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}

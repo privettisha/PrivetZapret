@@ -23,7 +23,6 @@
         <h1 id="state">Проверяем состояние…</h1>
         <p class="hero-description" id="subtitle">Только выбранные сервисы. Остальной трафик идёт напрямую.</p>
         <div class="hero-actions"><button class="primary" id="mainButton" disabled>Подождите</button></div>
-        <p class="hero-footnote">Автозапуск настраивается при установке. Изменения можно полностью удалить.</p>
       </div>
       <div class="route-graphic" aria-label="Схема работы PrivetZapret">
         <div class="route-top"><span>Маршрут соединения</span><span class="route-index">LOCAL / 01</span></div>
@@ -38,8 +37,18 @@
     </section>
     <section class="control-section">
       <div class="page-width control-grid">
+        <section class="youtube-panel" id="youtubePanel" aria-labelledby="youtube-title">
+          <div class="youtube-head"><div><p class="section-marker">YouTube</p><h2 id="youtube-title">Подключение</h2></div><button type="button" class="check youtube-check" id="checkYouTube">Проверить соединение</button></div>
+          <div class="youtube-profiles" role="group" aria-label="Профиль YouTube">
+            <button type="button" data-youtube-profile="standard">Стандарт</button>
+            <button type="button" data-youtube-profile="split">Мягкий</button>
+            <button type="button" data-youtube-profile="alternative">Альтернативный</button>
+            <button type="button" data-youtube-profile="tcp">Без QUIC</button>
+          </div>
+          <div class="youtube-results" id="youtubeResults" hidden></div>
+        </section>
         <section class="services-panel" aria-labelledby="services-title">
-          <div class="section-heading"><div><p class="section-marker">PrivetZapret</p><h2 id="services-title">Сервисы</h2></div><p><b id="selectedCount">0 выбрано</b><br>Остальной трафик не изменяется.</p></div>
+          <div class="section-heading"><div><p class="section-marker">PrivetZapret</p><h2 id="services-title">Сервисы</h2></div><p id="selectedCount">0 выбрано</p></div>
           <div class="catalog-tools">
             <label class="catalog-search"><span>Поиск</span><input id="serviceSearch" type="search" placeholder="Название сервиса" autocomplete="off"></label>
             <div class="catalog-presets" aria-label="Быстрый выбор">
@@ -53,7 +62,6 @@
             <button class="primary apply-services" id="applyServices" disabled>Изменений нет</button>
             <button class="check connect" id="telegramButton">Подключить в Telegram <span aria-hidden="true">↗</span></button>
           </div>
-          <p class="catalog-note">Настройка работает локально и не меняет страну аккаунта или внешний IP.</p>
         </section>
       </div>
     </section>

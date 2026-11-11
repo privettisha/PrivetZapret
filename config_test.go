@@ -68,3 +68,24 @@ func TestServiceSelectionIsNormalizedAndPreserved(t *testing.T) {
 		t.Fatalf("settings were not preserved: %#v", cfg)
 	}
 }
+
+func TestYoutubeProfileSurvivesUpdateAndRejectsUnknownValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := saveYoutubeProfile(path, "tcp"); err != nil {
+		t.Fatal(err)
+	}
+	first := loadConfig(path)
+	if err := saveConfig(path, "balanced"); err != nil {
+		t.Fatal(err)
+	}
+	second := loadConfig(path)
+	if second.YoutubeProfile != "tcp" || second.TelegramSecret != first.TelegramSecret {
+		t.Fatalf("profile or Telegram key lost on update: %#v", second)
+	}
+	if err := saveYoutubeProfile(path, "invalid"); err == nil {
+		t.Fatal("invalid profile was accepted")
+	}
+	if loadConfig(path).YoutubeProfile != "tcp" {
+		t.Fatal("invalid profile changed the configuration")
+	}
+}

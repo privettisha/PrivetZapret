@@ -2,6 +2,49 @@
   display: block;
 }
 
+.youtube-panel {
+  margin-bottom: 56px;
+  padding-bottom: 35px;
+  border-bottom: 1px solid #bdc9c7;
+}
+
+.youtube-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.youtube-head .section-marker { margin-bottom: 11px; }
+.youtube-head h2 { margin: 0; font-size: clamp(32px, 3.5vw, 46px); line-height: 1; letter-spacing: -.06em; }
+.youtube-check { width: auto; min-width: 210px; margin: 0; }
+
+.youtube-profiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.youtube-profiles button {
+  min-height: 54px;
+  padding: 11px 14px;
+  border: 1px solid #bdc9c7;
+  border-radius: 3px;
+  background: #eef2f0;
+  font-weight: 700;
+  text-align: left;
+}
+
+.youtube-profiles button.selected { border-color: var(--blue); background: #fff; color: var(--blue); }
+.youtube-profiles button:hover:not(:disabled) { border-color: var(--blue); }
+.youtube-profiles button:disabled { cursor: not-allowed; opacity: .6; }
+.youtube-results { display: flex; gap: 24px; margin-top: 18px; }
+.diagnostic-row { display: flex; gap: 9px; align-items: baseline; font-size: 13px; }
+.diagnostic-row span { color: var(--muted); }
+.diagnostic-row .ok { color: #214c38; }
+.diagnostic-row .failed { color: #aa3d33; }
+
 .catalog-tools {
   display: flex;
   align-items: end;
@@ -173,12 +216,16 @@
 }
 
 @media (max-width: 850px) {
+  .youtube-profiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .service-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 560px) {
+  .youtube-head { align-items: stretch; flex-direction: column; }
+  .youtube-check { width: 100%; }
+  .youtube-results { flex-direction: column; gap: 8px; }
   .catalog-tools,
   .catalog-actions {
     align-items: stretch;

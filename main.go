@@ -79,6 +79,26 @@ func main() {
 		}
 		return writeJSON(w, platformStatus())
 	}))
+	mux.HandleFunc("POST /api/youtube/profile", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		var request struct {
+			Profile string `json:"profile"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 1024))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			return fmt.Errorf("не удалось прочитать профиль")
+		}
+		if !platformStatus().Installed {
+			return fmt.Errorf("сначала установите PrivetZapret")
+		}
+		if err := platformSetYoutubeProfile(request.Profile); err != nil {
+			return err
+		}
+		return writeJSON(w, platformStatus())
+	}))
+	mux.HandleFunc("GET /api/diagnostics", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		return writeJSON(w, connectivityCheck())
+	}))
 	mux.HandleFunc("POST /api/telegram/connect", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		if err := platformConnectTelegram(); err != nil {
 			return err
@@ -129,23 +149,56 @@ func userError(err error) string {
 	return s
 }
 
-func connectivityCheck() map[string]any {
-	client := &http.Client{Timeout: 8 * time.Second}
-	check := func(url string) bool {
-		req, _ := http.NewRequest(http.MethodGet, url, nil)
-		req.Header.Set("User-Agent", "PrivetZapret/1.0")
-		resp, err := client.Do(req)
-		if err != nil {
-			return false
+type EndpointCheck struct {
+	Reachable bool   `json:"reachable"`
+	HTTPCode  int    `json:"http_code,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+func connectivityCheck() map[string]EndpointCheck {
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, TLSHandshakeTimeout: 3 * time.Second},
+	}
+	checks := map[string]EndpointCheck{}
+	targets := map[string]string{
+		"youtube": "https://www.youtube.com/generate_204",
+		"preview": "https://i.ytimg.com/vi/jfKfPfyJRdk/default.jpg",
+	}
+	results := make(chan struct {
+		name  string
+		check EndpointCheck
+	}, len(targets))
+	for name, url := range targets {
+		go func(name, url string) {
+			results <- struct {
+				name  string
+				check EndpointCheck
+			}{name, checkEndpoint(client, url)}
+		}(name, url)
+	}
+	for range targets {
+		result := <-results
+		checks[result.name] = result.check
+	}
+	return checks
+}
+
+func checkEndpoint(client *http.Client, url string) EndpointCheck {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return EndpointCheck{Error: "Некорректный адрес"}
+	}
+	req.Header.Set("User-Agent", "PrivetZapret/0.5")
+	resp, err := client.Do(req)
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return EndpointCheck{Error: "Тайм-аут"}
 		}
-		_ = resp.Body.Close()
-		return resp.StatusCode < 500
+		return EndpointCheck{Error: "Нет соединения"}
 	}
-	return map[string]any{
-		"youtube":  check("https://www.youtube.com/generate_204"),
-		"discord":  check("https://discord.com/api/v10/gateway"),
-		"telegram": telegramProxyReady(),
-	}
+	_ = resp.Body.Close()
+	return EndpointCheck{Reachable: true, HTTPCode: resp.StatusCode}
 }
 
 func init() {

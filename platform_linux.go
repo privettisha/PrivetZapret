@@ -55,7 +55,7 @@ func platformStatus() Status {
 	active := exec.Command("systemctl", "is-active", "--quiet", "privetzapret.service").Run() == nil
 	installed := statErr == nil
 	cfg := loadConfig(linuxConfigPath())
-	return Status{Installed: installed, Active: active, Mode: cfg.Mode, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}
+	return Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}
 }
 
 func platformInstall(mode string) error {
@@ -183,6 +183,33 @@ func platformSetServices(services []string) error {
 	return nil
 }
 
+func platformSetYoutubeProfile(profile string) error {
+	if normalizeYoutubeProfile(profile) != profile {
+		return errors.New("неизвестный профиль YouTube")
+	}
+	previous := loadConfig(linuxConfigPath()).YoutubeProfile
+	wasActive := platformStatus().Active
+	if wasActive {
+		if err := platformStop(); err != nil {
+			return err
+		}
+	}
+	if err := saveYoutubeProfile(linuxConfigPath(), profile); err != nil {
+		if wasActive {
+			_ = platformStart()
+		}
+		return err
+	}
+	if wasActive {
+		if err := platformStart(); err != nil {
+			_ = saveYoutubeProfile(linuxConfigPath(), previous)
+			_ = platformStart()
+			return err
+		}
+	}
+	return nil
+}
+
 func platformRemove() error {
 	_ = platformStop()
 	_ = exec.Command("systemctl", "disable", "privetzapret.service").Run()
@@ -204,7 +231,7 @@ func runLinuxDaemon() error {
 	if err := writeSelectedHostlists(linuxInstallDir, cfg.Services); err != nil {
 		return err
 	}
-	args := append([]string{"--qnum=300"}, strategyArgs(linuxInstallDir, cfg.Mode, cfg.Services)...)
+	args := append([]string{"--qnum=300"}, strategyArgs(linuxInstallDir, cfg.Mode, cfg.Services, cfg.YoutubeProfile)...)
 	cmd := exec.Command(filepath.Join(linuxInstallDir, "nfqws2"), args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
