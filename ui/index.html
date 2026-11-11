@@ -46,6 +46,7 @@
             <button type="button" data-youtube-profile="tcp">Без QUIC</button>
           </div>
           <div class="youtube-results" id="youtubeResults" hidden></div>
+          <button type="button" class="text-action" id="autoYouTube">Подобрать профиль</button>
         </section>
         <section class="services-panel" aria-labelledby="services-title">
           <div class="section-heading"><div><p class="section-marker">PrivetZapret</p><h2 id="services-title">Сервисы</h2></div><p id="selectedCount">0 выбрано</p></div>
@@ -62,6 +63,36 @@
             <button class="primary apply-services" id="applyServices" disabled>Изменений нет</button>
             <button class="check connect" id="telegramButton">Подключить в Telegram <span aria-hidden="true">↗</span></button>
           </div>
+        </section>
+        <section class="settings-panel" aria-labelledby="settings-title">
+          <div class="section-heading"><div><p class="section-marker">Настройки</p><h2 id="settings-title">Подключение</h2></div></div>
+          <div class="settings-grid">
+            <label class="settings-field">Свои домены<textarea id="customDomains" rows="4" spellcheck="false" placeholder="example.com"></textarea></label>
+            <label class="settings-field">Исключения<textarea id="excludeDomains" rows="4" spellcheck="false" placeholder="example.org"></textarea></label>
+          </div>
+          <div class="settings-grid profile-grid">
+            <label class="settings-field">Discord<select id="discordProfile"><option value="standard">Стандарт</option><option value="split">Разделение</option><option value="alternative">Альтернативный</option><option value="tcp">Без QUIC</option></select></label>
+            <label class="settings-field">По умолчанию<select id="genericProfile"><option value="standard">Стандарт</option><option value="split">Разделение</option><option value="alternative">Альтернативный</option><option value="tcp">Без QUIC</option></select></label>
+          </div>
+          <button type="button" class="text-action" id="autoDiscord">Подобрать для Discord</button>
+          <div id="serviceProfiles" class="service-profiles"></div>
+          <div class="settings-switches">
+            <label><input type="checkbox" id="autoHostlist"> Автосписок доменов</label>
+            <label><input type="checkbox" id="gameMode"> Игровой режим</label>
+            <label><input type="checkbox" id="autoUpdate"> Автообновление</label>
+          </div>
+          <button type="button" class="primary" id="saveSettings">Сохранить</button>
+        </section>
+        <section class="tools-panel" aria-labelledby="tools-title">
+          <div class="section-heading"><div><p class="section-marker">Система</p><h2 id="tools-title">Проверка</h2></div></div>
+          <div class="tools-actions">
+            <button type="button" id="systemCheck">Диагностика</button>
+            <button type="button" id="repairButton">Исправить</button>
+            <button type="button" id="checkUpdate">Проверить обновление</button>
+            <button type="button" id="rollbackButton" hidden>Откатить</button>
+          </div>
+          <div id="systemResults" class="system-results" hidden></div>
+          <button type="button" class="text-action" id="copyReport" hidden>Скопировать отчёт</button>
         </section>
       </div>
     </section>

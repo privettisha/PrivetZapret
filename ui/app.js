@@ -1,6 +1,6 @@
 const token=new URLSearchParams(location.search).get('token')||'';
 const $=s=>document.querySelector(s);
-let status=null,busy=false,dirty=false,draft=new Set(),search='',diagnostics=null;
+let status=null,busy=false,dirty=false,settingsDirty=false,draft=new Set(),search='',diagnostics=null,systemReport=null,profileDraft={};
 
 async function api(path,options={}){
   const r=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Privet-Token':token,...options.headers}});
@@ -47,7 +47,7 @@ function render(s){
   const count=draft.size;$('#selectedCount').textContent=`${plural(count)} выбрано`;$('#routeServices').textContent=plural(count);
   orb.className='orb '+(s.active?'active':'inactive');
   if(!s.installed){$('#state').textContent='Готов к установке';$('#subtitle').textContent='Выберите нужные сервисы и установите приложение.';btn.textContent='Установить';btn.className='primary';$('#removeButton').hidden=true}
-  else if(s.needs_update){$('#state').textContent='Доступно обновление';$('#subtitle').textContent='Настройки и ключ Telegram сохранятся.';btn.textContent='Обновить';btn.className='primary';$('#removeButton').hidden=false}
+  else if(s.needs_update){$('#state').textContent='Доступно обновление';$('#subtitle').textContent='Настройки и ключ Telegram сохранятся.';btn.textContent='Запустить';btn.className='primary';$('#removeButton').hidden=false}
   else if(s.active){$('#state').textContent='Подключение активно';$('#subtitle').textContent=`Локально обрабатывается: ${plural((s.services||[]).length)}. Остальной трафик идёт напрямую.`;btn.textContent='Остановить';btn.className='primary stop';$('#removeButton').hidden=false}
   else{$('#state').textContent='Подключение остановлено';$('#subtitle').textContent='Выбор сохранён. Нажмите кнопку, чтобы снова включить.';btn.textContent='Запустить';btn.className='primary';$('#removeButton').hidden=false}
   btn.disabled=busy;
@@ -55,13 +55,46 @@ function render(s){
   const telegramSelected=draft.has('telegram');tg.hidden=!telegramSelected;tg.disabled=busy||!s.telegram_ready;
   $('#youtubePanel').hidden=!draft.has('youtube');
   $('#checkYouTube').disabled=busy||!s.active;
+  $('#autoYouTube').disabled=busy||!s.active;
   document.querySelectorAll('[data-youtube-profile]').forEach(button=>{
     button.classList.toggle('selected',button.dataset.youtubeProfile===s.youtube_profile);
     button.setAttribute('aria-pressed',String(button.dataset.youtubeProfile===s.youtube_profile));
     button.disabled=busy||!s.installed;
   });
   renderDiagnostics();
+  if(!settingsDirty){
+    profileDraft={...(s.profiles||{})};
+    $('#customDomains').value=(s.custom_domains||[]).join('\n');
+    $('#excludeDomains').value=(s.exclude_domains||[]).join('\n');
+    $('#autoHostlist').checked=!!s.auto_hostlist;
+    $('#gameMode').checked=!!s.game_mode;
+    $('#autoUpdate').checked=!!s.auto_update;
+    $('#discordProfile').value=s.profiles?.discord||'standard';
+    $('#genericProfile').value=s.profiles?.generic||'standard';
+  }
+  $('#saveSettings').disabled=busy||!s.installed;
+  $('#repairButton').disabled=busy||!s.installed;
+  $('#autoDiscord').disabled=busy||!s.active||!draft.has('discord');
+  $('#rollbackButton').hidden=!s.rollback_available;
   renderCatalog(s);
+  renderServiceProfiles(s);
+}
+function renderServiceProfiles(s){
+  const root=$('#serviceProfiles');root.textContent='';
+  for(const service of s.catalog||[]){
+    if(!draft.has(service.id)||['youtube','discord','telegram'].includes(service.id))continue;
+    const row=document.createElement('div');row.className='service-profile';
+    const label=document.createElement('label');label.className='settings-field';label.textContent=service.name;
+    const select=document.createElement('select');
+    for(const [value,name] of [['standard','Стандарт'],['split','Разделение'],['alternative','Альтернативный'],['tcp','Без QUIC']]){
+      const option=document.createElement('option');option.value=value;option.textContent=name;select.append(option);
+    }
+    select.value=profileDraft[service.id]||profileDraft.generic||'standard';select.disabled=busy||!s.installed;
+    select.onchange=()=>{profileDraft[service.id]=select.value;settingsDirty=true};label.append(select);
+    const auto=document.createElement('button');auto.type='button';auto.className='text-action';auto.textContent='Подобрать';auto.disabled=busy||!s.active;
+    auto.onclick=()=>act(async()=>{await api('/api/strategies/auto',{method:'POST',body:JSON.stringify({service:service.id})});settingsDirty=false;toast('Профиль выбран')});
+    row.append(label,auto);root.append(row);
+  }
 }
 function renderDiagnostics(){
   const root=$('#youtubeResults');root.textContent='';root.hidden=!diagnostics;
@@ -84,6 +117,27 @@ $('#telegramButton').onclick=()=>act(async()=>{await api('/api/telegram/connect'
 $('#applyServices').onclick=()=>act(async()=>{const next=[...draft];await api('/api/services',{method:'POST',body:JSON.stringify({services:next})});dirty=false;toast('Выбор применён')});
 document.querySelectorAll('[data-youtube-profile]').forEach(button=>button.onclick=()=>act(async()=>{if(button.dataset.youtubeProfile===status.youtube_profile)return;await api('/api/youtube/profile',{method:'POST',body:JSON.stringify({profile:button.dataset.youtubeProfile})});diagnostics=null}));
 $('#checkYouTube').onclick=()=>act(async()=>{diagnostics=await api('/api/diagnostics')});
+$('#autoYouTube').onclick=()=>act(async()=>{await api('/api/strategies/auto',{method:'POST',body:JSON.stringify({service:'youtube'})});diagnostics=await api('/api/diagnostics')});
+$('#autoDiscord').onclick=()=>act(async()=>{await api('/api/strategies/auto',{method:'POST',body:JSON.stringify({service:'discord'})});settingsDirty=false;toast('Профиль выбран')});
+for(const control of document.querySelectorAll('.settings-panel textarea,.settings-panel select,.settings-panel input'))control.oninput=()=>{settingsDirty=true};
+$('#saveSettings').onclick=()=>act(async()=>{
+  const lines=id=>$('#'+id).value.split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);
+  await api('/api/settings',{method:'POST',body:JSON.stringify({custom_domains:lines('customDomains'),exclude_domains:lines('excludeDomains'),auto_hostlist:$('#autoHostlist').checked,game_mode:$('#gameMode').checked,auto_update:$('#autoUpdate').checked,profiles:{...profileDraft,discord:$('#discordProfile').value,generic:$('#genericProfile').value}})});
+  settingsDirty=false;toast('Сохранено');
+});
+$('#repairButton').onclick=()=>act(async()=>{await api('/api/repair',{method:'POST'});toast('Готово')});
+$('#systemCheck').onclick=()=>act(async()=>{systemReport=await api('/api/system');renderSystem()});
+function renderSystem(){
+  const root=$('#systemResults');root.textContent='';root.hidden=!systemReport;
+  $('#copyReport').hidden=!systemReport;
+  if(!systemReport)return;
+  for(const [label,value] of [['Служба',systemReport.active?'Работает':'Остановлена'],['Другие фильтры',(systemReport.conflicts||[]).join(', ')||'Не найдены'],['VPN',(systemReport.vpn_interfaces||[]).join(', ')||'Не найден'],['YouTube',systemReport.endpoints?.youtube?.reachable?'Доступен':systemReport.endpoints?.youtube?.error||'Нет соединения']]){
+    const row=document.createElement('div'),a=document.createElement('span'),b=document.createElement('strong');a.textContent=label;b.textContent=value;row.append(a,b);root.append(row);
+  }
+}
+$('#copyReport').onclick=async()=>{if(!systemReport)return;await navigator.clipboard.writeText(JSON.stringify(systemReport,null,2));toast('Отчёт скопирован')};
+$('#checkUpdate').onclick=()=>act(async()=>{const update=await api('/api/update/check');toast(update.available?`Доступна версия ${update.version}`:'Актуальная версия');if(update.available){$('#checkUpdate').textContent='Установить '+update.version;$('#checkUpdate').onclick=()=>act(async()=>{await api('/api/update/apply',{method:'POST'});toast('Обновление запущено')})}});
+$('#rollbackButton').onclick=()=>act(async()=>{await api('/api/update/rollback',{method:'POST'});toast('Восстановление запущено')});
 $('#serviceSearch').oninput=e=>{search=e.target.value;if(status)renderCatalog(status)};
 document.querySelectorAll('[data-preset]').forEach(button=>button.onclick=()=>{if(!status)return;const preset=button.dataset.preset;if(preset==='all')draft=new Set(status.catalog.map(item=>item.id));else if(preset==='default')draft=new Set(status.catalog.filter(item=>item.default).map(item=>item.id));else draft=new Set(status.services);dirty=!sameSelection(draft,status.services||[]);render(status)});
 refresh();

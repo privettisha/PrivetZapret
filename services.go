@@ -32,6 +32,36 @@ var serviceCatalog = []ServiceDefinition{
 	{ID: "telegram", Name: "Telegram Desktop", Category: "Основные", Description: "Встроенное локальное подключение", Default: true, Domains: []string{
 		"telegram.org", "t.me", "telegram.me", "telegra.ph", "web.telegram.org",
 	}},
+	{ID: "whatsapp", Name: "WhatsApp", Category: "Мессенджеры", Description: "Сайт и медиа", Domains: []string{
+		"whatsapp.com", "whatsapp.net", "wa.me", "whatsapp-cdn.net",
+	}},
+	{ID: "signal", Name: "Signal", Category: "Мессенджеры", Description: "Сайт и вложения", Domains: []string{
+		"signal.org", "signal.art", "signal.group", "signal.link", "signal.me", "signal.tube",
+	}},
+	{ID: "steam", Name: "Steam Community", Category: "Игры", Description: "Сообщество и мастерская", Domains: []string{
+		"steamcommunity.com", "steamusercontent.com", "steamstatic.com", "steampowered.com", "steamcontent.com",
+	}},
+	{ID: "roblox", Name: "Roblox", Category: "Игры", Description: "Сайт и запуск", Domains: []string{
+		"roblox.com", "rbxcdn.com",
+	}},
+	{ID: "cod", Name: "Call of Duty / Warzone", Category: "Игры", Description: "Сайт и вход", Domains: []string{
+		"callofduty.com", "activision.com", "demonware.net",
+	}},
+	{ID: "fortnite", Name: "Fortnite", Category: "Игры", Description: "Сайт и вход", Domains: []string{
+		"fortnite.com", "epicgames.com", "epicgames.dev", "unrealengine.com",
+	}},
+	{ID: "ea", Name: "EA", Category: "Игры", Description: "Сайт и вход", Domains: []string{
+		"ea.com", "electronicarts.com", "origin.com",
+	}},
+	{ID: "ubisoft", Name: "Ubisoft Connect", Category: "Игры", Description: "Сайт и вход", Domains: []string{
+		"ubisoft.com", "ubi.com", "ubiservices.com",
+	}},
+	{ID: "github", Name: "GitHub", Category: "Инструменты", Description: "Сайт, код и релизы", Domains: []string{
+		"github.com", "githubusercontent.com", "githubassets.com", "github.io",
+	}},
+	{ID: "spotify", Name: "Spotify", Category: "Медиа и сообщества", Description: "Сайт и медиа", Domains: []string{
+		"spotify.com", "scdn.co", "spotifycdn.com", "spotifycdn.net",
+	}},
 	{ID: "instagram", Name: "Instagram", Category: "Социальные сети", Description: "Лента, Reels и медиа", Domains: []string{
 		"instagram.com", "cdninstagram.com", "ig.me", "fbcdn.net",
 	}},
@@ -126,15 +156,18 @@ func hasService(services []string, id string) bool {
 }
 
 func writeSelectedHostlists(dir string, services []string) error {
-	selected := normalizeServices(services)
+	return writeSelectedHostlistsConfig(dir, Config{Services: services})
+}
+
+func writeSelectedHostlistsConfig(dir string, cfg Config) error {
+	selected := normalizeServices(cfg.Services)
 	groups := map[string][]string{"youtube": {}, "discord": {}, "telegram": {}, "generic": {}}
 	for _, id := range selected {
 		service, _ := serviceByID(id)
-		group := id
+		groups[id] = append(groups[id], service.Domains...)
 		if id != "youtube" && id != "discord" && id != "telegram" {
-			group = "generic"
+			groups["generic"] = append(groups["generic"], service.Domains...)
 		}
-		groups[group] = append(groups[group], service.Domains...)
 	}
 	for group, domains := range groups {
 		unique := make(map[string]bool)
@@ -154,6 +187,23 @@ func writeSelectedHostlists(dir string, services []string) error {
 		}
 		if err := writeFileIfChanged(filepath.Join(dir, "selected-"+group+".txt"), content, 0644); err != nil {
 			return fmt.Errorf("список %s: %w", group, err)
+		}
+	}
+	for name, domains := range map[string][]string{"custom": cfg.CustomDomains, "exclude": cfg.ExcludeDomains} {
+		content := []byte(strings.Join(normalizeDomains(domains), "\n"))
+		if len(content) > 0 {
+			content = append(content, '\n')
+		}
+		if err := writeFileIfChanged(filepath.Join(dir, "selected-"+name+".txt"), content, 0644); err != nil {
+			return err
+		}
+	}
+	if cfg.AutoHostlist {
+		path := filepath.Join(dir, "selected-auto.txt")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if err := os.WriteFile(path, nil, 0644); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

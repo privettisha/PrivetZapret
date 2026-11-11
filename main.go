@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -96,8 +97,95 @@ func main() {
 		}
 		return writeJSON(w, platformStatus())
 	}))
+	mux.HandleFunc("POST /api/settings", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		if !platformStatus().Installed {
+			return fmt.Errorf("сначала установите PrivetZapret")
+		}
+		var request struct {
+			CustomDomains  []string          `json:"custom_domains"`
+			ExcludeDomains []string          `json:"exclude_domains"`
+			AutoHostlist   bool              `json:"auto_hostlist"`
+			GameMode       bool              `json:"game_mode"`
+			AutoUpdate     bool              `json:"auto_update"`
+			Profiles       map[string]string `json:"profiles"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 32<<10))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			return fmt.Errorf("не удалось прочитать настройки")
+		}
+		if len(request.CustomDomains) > 100 || len(request.ExcludeDomains) > 100 {
+			return fmt.Errorf("слишком много доменов")
+		}
+		if len(normalizeDomains(request.CustomDomains)) != len(request.CustomDomains) || len(normalizeDomains(request.ExcludeDomains)) != len(request.ExcludeDomains) {
+			return fmt.Errorf("проверьте домены: нужен адрес без https:// и путей")
+		}
+		for id, profile := range request.Profiles {
+			_, known := serviceByID(id)
+			if (id != "custom" && id != "generic" && !known) || id == "youtube" || id == "telegram" || normalizeYoutubeProfile(profile) != profile {
+				return fmt.Errorf("неизвестный профиль")
+			}
+		}
+		cfg := loadConfig(platformConfigPath())
+		cfg.CustomDomains, cfg.ExcludeDomains = request.CustomDomains, request.ExcludeDomains
+		cfg.AutoHostlist, cfg.GameMode, cfg.AutoUpdate = request.AutoHostlist, request.GameMode, request.AutoUpdate
+		cfg.Profiles = request.Profiles
+		if err := platformApplyConfig(cfg); err != nil {
+			return err
+		}
+		return writeJSON(w, platformStatus())
+	}))
+	mux.HandleFunc("POST /api/repair", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		if err := platformRepair(); err != nil {
+			return err
+		}
+		return writeJSON(w, platformStatus())
+	}))
+	mux.HandleFunc("GET /api/update/check", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		info, err := checkUpdate(r.Context())
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, info)
+	}))
+	mux.HandleFunc("POST /api/update/apply", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+		defer cancel()
+		path, err := stageUpdate(ctx)
+		if err != nil {
+			return err
+		}
+		if err := launchInstaller(path); err != nil {
+			return err
+		}
+		time.AfterFunc(1500*time.Millisecond, func() { os.Exit(0) })
+		return writeJSON(w, map[string]bool{"ok": true})
+	}))
+	mux.HandleFunc("POST /api/update/rollback", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		if err := rollbackUpdate(); err != nil {
+			return err
+		}
+		time.AfterFunc(1500*time.Millisecond, func() { os.Exit(0) })
+		return writeJSON(w, map[string]bool{"ok": true})
+	}))
+	mux.HandleFunc("POST /api/strategies/auto", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		var request struct {
+			Service string `json:"service"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil {
+			return fmt.Errorf("не удалось прочитать сервис")
+		}
+		profile, err := autoTune(request.Service)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, map[string]any{"profile": profile, "status": platformStatus()})
+	}))
 	mux.HandleFunc("GET /api/diagnostics", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		return writeJSON(w, connectivityCheck())
+	}))
+	mux.HandleFunc("GET /api/system", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		return writeJSON(w, systemDiagnostics())
 	}))
 	mux.HandleFunc("POST /api/telegram/connect", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		if err := platformConnectTelegram(); err != nil {
@@ -117,7 +205,12 @@ func main() {
 	}()
 	fmt.Println("PrivetZapret:", url)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+	serveResult := make(chan error, 1)
+	go func() { serveResult <- server.Serve(listener) }()
+	if err := runTray(url, server); err != nil {
+		log.Printf("tray: %v", err)
+	}
+	if err := <-serveResult; err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
@@ -189,7 +282,7 @@ func checkEndpoint(client *http.Client, url string) EndpointCheck {
 	if err != nil {
 		return EndpointCheck{Error: "Некорректный адрес"}
 	}
-	req.Header.Set("User-Agent", "PrivetZapret/0.5")
+	req.Header.Set("User-Agent", "PrivetZapret/"+appVersion)
 	resp, err := client.Do(req)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

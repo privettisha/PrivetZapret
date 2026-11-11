@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,14 @@ const linuxUnitPath = "/etc/systemd/system/privetzapret.service"
 var linuxPayload embed.FS
 
 func platformHandleSpecialMode() bool {
+	if len(os.Args) > 1 && os.Args[1] == "--silent-install" {
+		time.Sleep(2 * time.Second)
+		if err := platformInstall("balanced"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return true
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--daemon" {
 		if err := runLinuxDaemon(); err != nil {
 			fmt.Fprintln(os.Stderr, "PrivetZapret:", err)
@@ -48,14 +57,18 @@ func platformRelaunchElevated() {
 
 func linuxConfigPath() string { return filepath.Join(linuxInstallDir, "config.json") }
 
-func linuxVersionPath() string { return filepath.Join(linuxInstallDir, "version.txt") }
+func linuxVersionPath() string        { return filepath.Join(linuxInstallDir, "version.txt") }
+func platformInstalledBinary() string { return filepath.Join(linuxInstallDir, appName) }
 
 func platformStatus() Status {
 	_, statErr := os.Stat(linuxUnitPath)
 	active := exec.Command("systemctl", "is-active", "--quiet", "privetzapret.service").Run() == nil
 	installed := statErr == nil
 	cfg := loadConfig(linuxConfigPath())
-	return Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}
+	status := statusSettings(Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
+	_, err := os.Stat(rollbackPath())
+	status.RollbackAvailable = err == nil
+	return status
 }
 
 func platformInstall(mode string) error {
@@ -210,6 +223,77 @@ func platformSetYoutubeProfile(profile string) error {
 	return nil
 }
 
+func platformConfigPath() string { return linuxConfigPath() }
+
+func platformApplyConfig(cfg Config) error {
+	previous := loadConfig(linuxConfigPath())
+	wasActive := platformStatus().Active
+	if wasActive {
+		if err := platformStop(); err != nil {
+			return err
+		}
+	}
+	if err := saveConfigValue(linuxConfigPath(), cfg); err != nil {
+		if wasActive {
+			_ = platformStart()
+		}
+		return err
+	}
+	if wasActive {
+		if err := platformStart(); err != nil {
+			_ = saveConfigValue(linuxConfigPath(), previous)
+			_ = platformStart()
+			return err
+		}
+	}
+	return nil
+}
+
+func platformRepair() error {
+	if !platformStatus().Installed {
+		return errors.New("сначала установите PrivetZapret")
+	}
+	if err := platformStop(); err != nil {
+		return err
+	}
+	if err := platformStart(); err != nil {
+		return err
+	}
+	if path, err := exec.LookPath("resolvectl"); err == nil {
+		_ = exec.Command(path, "flush-caches").Run()
+	}
+	return nil
+}
+
+func platformOtherFilters() []string {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path, err := os.Readlink(filepath.Join("/proc", entry.Name(), "exe"))
+		if err != nil || strings.HasPrefix(path, linuxInstallDir+"/") {
+			continue
+		}
+		name := strings.ToLower(filepath.Base(path))
+		for _, match := range []string{"nfqws", "nfqws2", "tpws", "goodbyedpi", "winws", "winws2"} {
+			if name == match {
+				seen[name] = true
+			}
+		}
+	}
+	var names []string
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func platformRemove() error {
 	_ = platformStop()
 	_ = exec.Command("systemctl", "disable", "privetzapret.service").Run()
@@ -228,10 +312,10 @@ func runLinuxDaemon() error {
 	if len(cfg.Services) == 0 {
 		return errors.New("не выбран ни один сервис")
 	}
-	if err := writeSelectedHostlists(linuxInstallDir, cfg.Services); err != nil {
+	if err := writeSelectedHostlistsConfig(linuxInstallDir, cfg); err != nil {
 		return err
 	}
-	args := append([]string{"--qnum=300"}, strategyArgs(linuxInstallDir, cfg.Mode, cfg.Services, cfg.YoutubeProfile)...)
+	args := append([]string{"--qnum=300"}, strategyArgsConfig(linuxInstallDir, cfg)...)
 	cmd := exec.Command(filepath.Join(linuxInstallDir, "nfqws2"), args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -275,7 +359,7 @@ func runLinuxDaemon() error {
 		return fmt.Errorf("telegram proxy завершился: %w", err)
 	case <-time.After(350 * time.Millisecond):
 	}
-	if err := applyNftTable(); err != nil {
+	if err := applyNftTable(cfg); err != nil {
 		_ = cmd.Process.Kill()
 		if tgCmd != nil {
 			_ = tgCmd.Process.Kill()
@@ -286,6 +370,7 @@ func runLinuxDaemon() error {
 		}
 		return err
 	}
+	go autoUpdateLoop()
 	defer func() {
 		_ = cmd.Process.Kill()
 		if tgCmd != nil {
@@ -325,16 +410,28 @@ func runLinuxDaemon() error {
 	}
 }
 
-func applyNftTable() error {
-	script := `table inet privetzapret {
+func applyNftTable(cfg Config) error {
+	udpPorts := "443, 19294-19344, 50000-50100"
+	if cfg.GameMode && hasGameService(cfg.Services) {
+		udpPorts += ", 3074, 3478-3480, 3659"
+	}
+	script := fmt.Sprintf(`table inet privetzapret {
   chain postrouting {
     type filter hook postrouting priority 101; policy accept;
     ip daddr { 2.26.225.138, 31.76.251.3 } accept
     meta mark and 0x40000000 == 0 meta l4proto tcp tcp dport { 443, 2053, 2083, 2087, 2096, 8443 } ct original packets 1-12 queue num 300 bypass
-    meta mark and 0x40000000 == 0 meta l4proto udp udp dport { 443, 19294-19344, 50000-50100 } ct original packets 1-12 queue num 300 bypass
+    meta mark and 0x40000000 == 0 meta l4proto udp udp dport { %s } ct original packets 1-12 queue num 300 bypass
   }
-}
+`, udpPorts)
+	if cfg.AutoHostlist {
+		script += `  chain input {
+    type filter hook input priority -101; policy accept;
+    ip saddr { 2.26.225.138, 31.76.251.3 } accept
+    meta mark and 0x40000000 == 0 meta l4proto tcp tcp sport 443 ct reply packets 1-12 queue num 300 bypass
+  }
 `
+	}
+	script += "}\n"
 	cmd := exec.Command("nft", "-f", "-")
 	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()

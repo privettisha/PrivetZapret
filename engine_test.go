@@ -102,6 +102,40 @@ func TestFullCatalogStrategyAcceptedByZapret2(t *testing.T) {
 	}
 }
 
+func TestExtendedConfigurationAcceptedByZapret2(t *testing.T) {
+	dir := t.TempDir()
+	if err := extractCommon(dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		Mode: "balanced", Services: []string{"youtube", "discord", "signal", "roblox"},
+		CustomDomains: []string{"example.com"}, ExcludeDomains: []string{"example.org"},
+		AutoHostlist: true, GameMode: true,
+		Profiles: map[string]string{"discord": "split", "signal": "alternative", "roblox": "tcp", "custom": "split"},
+	}
+	if err := writeSelectedHostlistsConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	engine := filepath.Join(dir, "nfqws2")
+	b, err := os.ReadFile("payload/linux/nfqws2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(engine, b, 0755); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"--dry-run", "--qnum=300"}, strategyArgsConfig(dir, cfg)...)
+	if out, err := exec.Command(engine, args...).CombinedOutput(); err != nil {
+		t.Fatalf("extended configuration rejected: %v\n%s", err, out)
+	}
+	joined := strings.Join(args, " ")
+	for _, needle := range []string{"selected-signal.txt", "selected-roblox.txt", "selected-custom.txt", "selected-exclude.txt", "selected-auto.txt", "--filter-udp=3074,3478-3480,3659"} {
+		if !strings.Contains(joined, needle) {
+			t.Fatalf("missing %s", needle)
+		}
+	}
+}
+
 func TestPrivetDNSProxyAddressesAreExcludedFromDesync(t *testing.T) {
 	args := strategyArgs(t.TempDir(), "balanced", defaultServices())
 	joined := strings.Join(args, " ")

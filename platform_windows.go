@@ -28,7 +28,7 @@ var windowsFiles = []string{"winws2.exe", "WinDivert.dll", "WinDivert64.sys", "c
 // Keep engine assets in a versioned directory. An already loaded WinDivert
 // driver may legitimately lock an older .sys file after winws2 has exited.
 // A new release must never depend on overwriting that file in place.
-const windowsEngineRevision = "engine-zapret2-1.0.6-r3"
+const windowsEngineRevision = "engine-zapret2-1.0.7-r1"
 
 func windowsInstallDir() string {
 	base := os.Getenv("ProgramData")
@@ -42,9 +42,18 @@ func windowsConfigPath() string { return filepath.Join(windowsInstallDir(), "con
 
 func windowsEngineDir() string { return filepath.Join(windowsInstallDir(), windowsEngineRevision) }
 
-func windowsVersionPath() string { return filepath.Join(windowsInstallDir(), "version.txt") }
+func windowsVersionPath() string      { return filepath.Join(windowsInstallDir(), "version.txt") }
+func platformInstalledBinary() string { return filepath.Join(windowsInstallDir(), appName+".exe") }
 
 func platformHandleSpecialMode() bool {
+	if len(os.Args) > 1 && os.Args[1] == "--silent-install" {
+		time.Sleep(2 * time.Second)
+		if err := platformInstall("balanced"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return true
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--service" {
 		if err := svc.Run(serviceName, &zapretService{}); err != nil {
 			fmt.Fprintln(os.Stderr, "PrivetZapret service:", err)
@@ -86,7 +95,10 @@ func platformStatus() Status {
 		}
 	}
 	cfg := loadConfig(windowsConfigPath())
-	return Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}
+	status := statusSettings(Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
+	_, err = os.Stat(rollbackPath())
+	status.RollbackAvailable = err == nil
+	return status
 }
 
 func platformInstall(mode string) error {
@@ -256,6 +268,61 @@ func platformSetYoutubeProfile(profile string) error {
 	return nil
 }
 
+func platformConfigPath() string { return windowsConfigPath() }
+
+func platformApplyConfig(cfg Config) error {
+	previous := loadConfig(windowsConfigPath())
+	wasActive := platformStatus().Active
+	if wasActive {
+		if err := platformStop(); err != nil {
+			return err
+		}
+	}
+	if err := saveConfigValue(windowsConfigPath(), cfg); err != nil {
+		if wasActive {
+			_ = platformStart()
+		}
+		return err
+	}
+	if wasActive {
+		if err := platformStart(); err != nil {
+			_ = saveConfigValue(windowsConfigPath(), previous)
+			_ = platformStart()
+			return err
+		}
+	}
+	return nil
+}
+
+func platformRepair() error {
+	if !platformStatus().Installed {
+		return errors.New("сначала установите PrivetZapret")
+	}
+	if err := platformStop(); err != nil {
+		return err
+	}
+	if err := platformStart(); err != nil {
+		return err
+	}
+	_ = exec.Command("ipconfig", "/flushdns").Run()
+	return nil
+}
+
+func platformOtherFilters() []string {
+	out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+	if err != nil {
+		return nil
+	}
+	text := strings.ToLower(string(out))
+	var found []string
+	for _, name := range []string{"goodbyedpi.exe", "nfqws.exe", "nfqws2.exe", "tpws.exe", "winws.exe"} {
+		if strings.Contains(text, "\""+name+"\"") {
+			found = append(found, name)
+		}
+	}
+	return found
+}
+
 func platformRemove() error {
 	_ = platformStop()
 	m, err := mgr.Connect()
@@ -292,7 +359,7 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	if len(cfg.Services) == 0 {
 		return false, 4
 	}
-	if err := writeSelectedHostlists(engineDir, cfg.Services); err != nil {
+	if err := writeSelectedHostlistsConfig(engineDir, cfg); err != nil {
 		return false, 4
 	}
 	args := []string{
@@ -301,7 +368,13 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.discord_media.txt"),
 		"--wf-raw-part=@" + filepath.Join(engineDir, "windivert_part.quic_initial_ietf.txt"),
 	}
-	args = append(args, strategyArgs(engineDir, cfg.Mode, cfg.Services, cfg.YoutubeProfile)...)
+	if cfg.GameMode && hasGameService(cfg.Services) {
+		args[1] = "--wf-udp-out=443,19294-19344,50000-50100,3074,3478-3480,3659"
+	}
+	if cfg.AutoHostlist {
+		args = append(args, "--wf-tcp-in=443")
+	}
+	args = append(args, strategyArgsConfig(engineDir, cfg)...)
 	zapCmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)
 	zapCmd.Dir = engineDir
 	zapCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -359,6 +432,7 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	case <-time.After(700 * time.Millisecond):
 	}
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	go autoUpdateLoop()
 	for {
 		select {
 		case <-zapDone:
