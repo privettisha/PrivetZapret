@@ -190,6 +190,16 @@ func stageUpdate(ctx context.Context) (string, error) {
 }
 
 func launchInstaller(path string) error {
+	if runtime.GOOS == "linux" {
+		// The updater must not share the PrivetZapret service cgroup: stopping
+		// that service during installation would kill its own child process.
+		unit := fmt.Sprintf("privetzapret-upgrade-%d", time.Now().UnixNano())
+		cmd := exec.Command("systemd-run", "--quiet", "--collect", "--service-type=exec", "--unit="+unit, path, "--silent-install")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("запуск обновления: %s: %w", strings.TrimSpace(string(out)), err)
+		}
+		return nil
+	}
 	cmd := exec.Command(path, "--silent-install")
 	if err := cmd.Start(); err != nil {
 		return err
