@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,20 +11,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
 
-const releaseAPI = "https://api.github.com/repos/privettisha/PrivetZapret/releases/latest"
+const releasePage = "https://github.com/privettisha/PrivetZapret/releases/latest"
+const releaseTagPrefix = "https://github.com/privettisha/PrivetZapret/releases/tag/"
+const releaseDownloadPrefix = "https://github.com/privettisha/PrivetZapret/releases/download/"
+
+var releaseTagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
 type ReleaseInfo struct {
-	TagName string `json:"tag_name"`
-	Assets  []struct {
-		Name string `json:"name"`
-		URL  string `json:"browser_download_url"`
-	} `json:"assets"`
+	TagName string
 }
 
 type UpdateInfo struct {
@@ -44,25 +44,30 @@ func rollbackPath() string {
 func releaseClient() *http.Client { return &http.Client{Timeout: 3 * time.Minute} }
 
 func fetchLatestRelease(ctx context.Context) (ReleaseInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseAPI, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, releasePage, nil)
 	if err != nil {
 		return ReleaseInfo{}, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "PrivetZapret/"+appVersion)
-	resp, err := releaseClient().Do(req)
+	client := releaseClient()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
 	if err != nil {
 		return ReleaseInfo{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusMovedPermanently && resp.StatusCode != http.StatusTemporaryRedirect && resp.StatusCode != http.StatusPermanentRedirect {
 		return ReleaseInfo{}, fmt.Errorf("GitHub: HTTP %d", resp.StatusCode)
 	}
-	var release ReleaseInfo
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&release); err != nil {
-		return ReleaseInfo{}, err
+	return releaseFromLocation(resp.Header.Get("Location"))
+}
+
+func releaseFromLocation(location string) (ReleaseInfo, error) {
+	tag := strings.TrimPrefix(location, releaseTagPrefix)
+	if tag == location || !releaseTagPattern.MatchString(tag) {
+		return ReleaseInfo{}, errors.New("GitHub: некорректный адрес релиза")
 	}
-	return release, nil
+	return ReleaseInfo{TagName: tag}, nil
 }
 
 func versionParts(version string) [3]int {
@@ -95,16 +100,14 @@ func checkUpdate(ctx context.Context) (UpdateInfo, error) {
 }
 
 func assetURL(release ReleaseInfo, name string) string {
-	for _, asset := range release.Assets {
-		if asset.Name == name {
-			return asset.URL
-		}
+	if !releaseTagPattern.MatchString(release.TagName) {
+		return ""
 	}
-	return ""
+	return releaseDownloadPrefix + release.TagName + "/" + name
 }
 
 func downloadAsset(ctx context.Context, url string, limit int64) ([]byte, error) {
-	if !strings.HasPrefix(url, "https://github.com/privettisha/PrivetZapret/releases/download/") {
+	if !strings.HasPrefix(url, releaseDownloadPrefix) {
 		return nil, errors.New("неизвестный адрес релиза")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
