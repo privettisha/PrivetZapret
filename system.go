@@ -7,15 +7,19 @@ import (
 )
 
 type SystemReport struct {
-	Time          string                   `json:"time"`
-	Version       string                   `json:"version"`
-	Platform      string                   `json:"platform"`
-	Installed     bool                     `json:"installed"`
-	Active        bool                     `json:"active"`
-	TelegramReady bool                     `json:"telegram_ready"`
-	Conflicts     []string                 `json:"conflicts"`
-	VPNInterfaces []string                 `json:"vpn_interfaces"`
-	Endpoints     map[string]EndpointCheck `json:"endpoints"`
+	Time           string                   `json:"time"`
+	Version        string                   `json:"version"`
+	Platform       string                   `json:"platform"`
+	Installed      bool                     `json:"installed"`
+	Active         bool                     `json:"active"`
+	Services       []string                 `json:"services"`
+	Profiles       map[string]string        `json:"profiles"`
+	YoutubeProfile string                   `json:"youtube_profile"`
+	AutoHostlist   bool                     `json:"auto_hostlist"`
+	TelegramReady  bool                     `json:"telegram_ready"`
+	Conflicts      []string                 `json:"conflicts"`
+	VPNInterfaces  []string                 `json:"vpn_interfaces"`
+	Endpoints      map[string]EndpointCheck `json:"endpoints"`
 }
 
 func systemDiagnostics() SystemReport {
@@ -23,6 +27,8 @@ func systemDiagnostics() SystemReport {
 	report := SystemReport{
 		Time: time.Now().Format(time.RFC3339), Version: appVersion,
 		Platform: status.Platform, Installed: status.Installed, Active: status.Active,
+		Services: status.Services, Profiles: status.Profiles,
+		YoutubeProfile: status.YoutubeProfile, AutoHostlist: status.AutoHostlist,
 		TelegramReady: status.TelegramReady, Conflicts: platformOtherFilters(),
 		Endpoints: connectivityCheck(),
 	}

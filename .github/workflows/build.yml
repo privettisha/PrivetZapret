@@ -74,6 +74,11 @@ jobs:
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/PrivetZapret-Arch-x64 .
           cd dist
           sha256sum PrivetZapret-Windows-x64.exe PrivetZapret-Arch-x64 > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: privetzapret-release-candidate
+          path: dist/*
+          if-no-files-found: error
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:

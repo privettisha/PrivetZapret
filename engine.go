@@ -166,12 +166,19 @@ func strategyArgsConfig(dir string, cfg Config) []string {
 		args = appendHostProfile(args, p("selected-custom.txt"), cfg.Profiles["custom"], repeats, split, proxyExcludes, exclude)
 	}
 	if cfg.AutoHostlist {
-		fake, splitMode, _ := profileStrategy(cfg.Profiles["generic"], repeats, split)
+		fake, splitMode, quic := profileStrategy(cfg.Profiles["generic"], repeats, split)
 		args = append(args, "--filter-tcp=443", "--filter-l7=tls", proxyExcludes,
 			"--hostlist-auto="+p("selected-auto.txt"))
 		args = append(args, exclude...)
 		args = append(args, "--out-range=-d10", "--payload=tls_client_hello",
 			"--lua-desync="+fake, "--lua-desync="+splitMode, "--new")
+		// A hostname learned from failed TCP attempts may later be used over
+		// QUIC. Apply the same learned list there too, without catching all
+		// unrelated UDP/443 traffic.
+		args = append(args, "--filter-udp=443", "--filter-l7=quic", proxyExcludes,
+			"--hostlist="+p("selected-auto.txt"))
+		args = append(args, exclude...)
+		args = append(args, "--payload=quic_initial", "--lua-desync="+quic, "--new")
 	}
 	if cfg.GameMode && hasGameService(cfg.Services) {
 		args = append(args, "--filter-udp=3074,3478-3480,3659", "--filter-l7=stun", proxyExcludes,

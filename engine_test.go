@@ -134,6 +134,9 @@ func TestExtendedConfigurationAcceptedByZapret2(t *testing.T) {
 			t.Fatalf("missing %s", needle)
 		}
 	}
+	if !strings.Contains(joined, "--filter-udp=443 --filter-l7=quic --ipset-exclude-ip=2.26.225.138,31.76.251.3 --hostlist="+filepath.Join(dir, "selected-auto.txt")) {
+		t.Fatal("auto-learned hosts must also be covered over QUIC")
+	}
 }
 
 func TestPrivetDNSProxyAddressesAreExcludedFromDesync(t *testing.T) {

@@ -48,7 +48,7 @@ func platformInstalledBinary() string { return filepath.Join(windowsInstallDir()
 func platformHandleSpecialMode() bool {
 	if len(os.Args) > 1 && os.Args[1] == "--silent-install" {
 		time.Sleep(2 * time.Second)
-		if err := platformInstall("balanced"); err != nil {
+		if err := platformInstall(loadConfig(windowsConfigPath()).Mode); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

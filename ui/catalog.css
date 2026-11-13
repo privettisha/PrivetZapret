@@ -2,6 +2,11 @@
   display: block;
 }
 
+.hero-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.hero-update { min-height:50px; padding:13px 20px; border:1px solid var(--ink); border-radius:3px; background:transparent; font-weight:750; }
+.hero-update:hover { background:var(--ink); color:#fff; }
+.hero-update:disabled { opacity:.55; cursor:wait; }
+
 .youtube-panel {
   margin-bottom: 56px;
   padding-bottom: 35px;
@@ -242,6 +247,7 @@
 }
 
 @media (max-width: 560px) {
+  .hero-update { width:100%; }
   .settings-grid { grid-template-columns:1fr; }
   .service-profiles { grid-template-columns:1fr; }
   .tools-actions button { flex:1; }

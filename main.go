@@ -248,6 +248,9 @@ type EndpointCheck struct {
 	Error     string `json:"error,omitempty"`
 }
 
+const youtubeMediaProbeURL = "https://redirector.googlevideo.com/report_mapping"
+const soundcloudMediaProbeURL = "https://cf-media.sndcdn.com/"
+
 func connectivityCheck() map[string]EndpointCheck {
 	client := &http.Client{
 		Timeout:   5 * time.Second,
@@ -255,8 +258,10 @@ func connectivityCheck() map[string]EndpointCheck {
 	}
 	checks := map[string]EndpointCheck{}
 	targets := map[string]string{
-		"youtube": "https://www.youtube.com/generate_204",
-		"preview": "https://i.ytimg.com/vi/jfKfPfyJRdk/default.jpg",
+		"youtube":                 "https://www.youtube.com/generate_204",
+		"preview":                 "https://i.ytimg.com/vi/jfKfPfyJRdk/default.jpg",
+		"video_server":            youtubeMediaProbeURL,
+		"soundcloud_media_server": soundcloudMediaProbeURL,
 	}
 	results := make(chan struct {
 		name  string

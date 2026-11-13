@@ -22,7 +22,7 @@
         <p class="intro-line"><span class="signal-dot" aria-hidden="true"></span> Выборочная обработка соединений</p>
         <h1 id="state">Проверяем состояние…</h1>
         <p class="hero-description" id="subtitle">Только выбранные сервисы. Остальной трафик идёт напрямую.</p>
-        <div class="hero-actions"><button class="primary" id="mainButton" disabled>Подождите</button></div>
+        <div class="hero-actions"><button class="primary" id="mainButton" disabled>Подождите</button><button type="button" class="hero-update" id="checkUpdate" hidden>Обновить</button></div>
       </div>
       <div class="route-graphic" aria-label="Схема работы PrivetZapret">
         <div class="route-top"><span>Маршрут соединения</span><span class="route-index">LOCAL / 01</span></div>
@@ -88,7 +88,6 @@
           <div class="tools-actions">
             <button type="button" id="systemCheck">Диагностика</button>
             <button type="button" id="repairButton">Исправить</button>
-            <button type="button" id="checkUpdate">Проверить обновление</button>
             <button type="button" id="rollbackButton" hidden>Откатить</button>
           </div>
           <div id="systemResults" class="system-results" hidden></div>

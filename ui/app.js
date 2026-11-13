@@ -51,6 +51,7 @@ function render(s){
   else if(s.active){$('#state').textContent='Подключение активно';$('#subtitle').textContent=`Локально обрабатывается: ${plural((s.services||[]).length)}. Остальной трафик идёт напрямую.`;btn.textContent='Остановить';btn.className='primary stop';$('#removeButton').hidden=false}
   else{$('#state').textContent='Подключение остановлено';$('#subtitle').textContent='Выбор сохранён. Нажмите кнопку, чтобы снова включить.';btn.textContent='Запустить';btn.className='primary';$('#removeButton').hidden=false}
   btn.disabled=busy;
+  $('#checkUpdate').hidden=!s.installed;
   apply.disabled=busy||!dirty;apply.textContent=dirty?'Применить выбор':'Изменений нет';
   const telegramSelected=draft.has('telegram');tg.hidden=!telegramSelected;tg.disabled=busy||!s.telegram_ready;
   $('#youtubePanel').hidden=!draft.has('youtube');
@@ -99,12 +100,14 @@ function renderServiceProfiles(s){
 function renderDiagnostics(){
   const root=$('#youtubeResults');root.textContent='';root.hidden=!diagnostics;
   if(!diagnostics)return;
-  for(const [key,label] of [['youtube','Сайт'],['preview','Превью']]){
+  for(const [key,label] of [['youtube','Сайт'],['preview','Превью'],['video_server','Видеосервер'],['soundcloud_media_server','SoundCloud CDN']]){
     const check=diagnostics[key];
+    if(key==='soundcloud_media_server'&&!draft.has('soundcloud'))continue;
     const row=document.createElement('div');row.className='diagnostic-row';
     const name=document.createElement('span');name.textContent=label;
-    const value=document.createElement('strong');value.className=check?.reachable?'ok':'failed';
-    value.textContent=check?.reachable?(check.http_code>=400?`HTTP ${check.http_code}`:'Доступно'):(check?.error||'Нет соединения');
+    const value=document.createElement('strong');const usable=check?.reachable&&(check.http_code>=200&&check.http_code<400||key==='soundcloud_media_server'&&check.http_code===403);
+    value.className=usable?'ok':'failed';
+    value.textContent=usable?(key==='soundcloud_media_server'?'CDN отвечает':'Доступно'):(check?.reachable?`HTTP ${check.http_code}`:check?.error||'Нет соединения');
     row.append(name,value);root.append(row);
   }
 }
@@ -131,12 +134,24 @@ function renderSystem(){
   const root=$('#systemResults');root.textContent='';root.hidden=!systemReport;
   $('#copyReport').hidden=!systemReport;
   if(!systemReport)return;
-  for(const [label,value] of [['Служба',systemReport.active?'Работает':'Остановлена'],['Другие фильтры',(systemReport.conflicts||[]).join(', ')||'Не найдены'],['VPN',(systemReport.vpn_interfaces||[]).join(', ')||'Не найден'],['YouTube',systemReport.endpoints?.youtube?.reachable?'Доступен':systemReport.endpoints?.youtube?.error||'Нет соединения']]){
+  for(const [label,value] of [['Служба',systemReport.active?'Работает':'Остановлена'],['Другие фильтры',(systemReport.conflicts||[]).join(', ')||'Не найдены'],['VPN',(systemReport.vpn_interfaces||[]).join(', ')||'Не найден'],['YouTube',systemReport.endpoints?.youtube?.reachable?'Сайт отвечает':systemReport.endpoints?.youtube?.error||'Нет соединения'],['YouTube CDN',systemReport.endpoints?.video_server?.reachable?'Сервер отвечает':systemReport.endpoints?.video_server?.error||'Нет соединения'],['SoundCloud CDN',systemReport.endpoints?.soundcloud_media_server?.reachable?'Сервер отвечает':systemReport.endpoints?.soundcloud_media_server?.error||'Нет соединения']]){
     const row=document.createElement('div'),a=document.createElement('span'),b=document.createElement('strong');a.textContent=label;b.textContent=value;row.append(a,b);root.append(row);
   }
 }
 $('#copyReport').onclick=async()=>{if(!systemReport)return;await navigator.clipboard.writeText(JSON.stringify(systemReport,null,2));toast('Отчёт скопирован')};
-$('#checkUpdate').onclick=()=>act(async()=>{const update=await api('/api/update/check');toast(update.available?`Доступна версия ${update.version}`:'Актуальная версия');if(update.available){$('#checkUpdate').textContent='Установить '+update.version;$('#checkUpdate').onclick=()=>act(async()=>{await api('/api/update/apply',{method:'POST'});toast('Обновление запущено')})}});
+$('#checkUpdate').onclick=async()=>{
+  if(busy)return;
+  const button=$('#checkUpdate'),previous=button.textContent;
+  busy=true;button.disabled=true;button.textContent='Проверяем…';
+  try{
+    const update=await api('/api/update/check');
+    if(!update.available){toast('Установлена актуальная версия');return}
+    button.textContent='Устанавливаем…';
+    await api('/api/update/apply',{method:'POST'});
+    toast('Обновление запущено. Откройте приложение снова.');
+  }catch(error){toast(error.message)}
+  finally{button.textContent=previous;button.disabled=false;busy=false}
+};
 $('#rollbackButton').onclick=()=>act(async()=>{await api('/api/update/rollback',{method:'POST'});toast('Восстановление запущено')});
 $('#serviceSearch').oninput=e=>{search=e.target.value;if(status)renderCatalog(status)};
 document.querySelectorAll('[data-preset]').forEach(button=>button.onclick=()=>{if(!status)return;const preset=button.dataset.preset;if(preset==='all')draft=new Set(status.catalog.map(item=>item.id));else if(preset==='default')draft=new Set(status.catalog.filter(item=>item.default).map(item=>item.id));else draft=new Set(status.services);dirty=!sameSelection(draft,status.services||[]);render(status)});
