@@ -1,6 +1,6 @@
 const token=new URLSearchParams(location.search).get('token')||'';
 const $=s=>document.querySelector(s);
-let status=null,busy=false,dirty=false,settingsDirty=false,dnsDirty=false,draft=new Set(),search='',diagnostics=null,systemReport=null,profileDraft={};
+let status=null,busy=false,dirty=false,settingsDirty=false,dnsDirty=false,draft=new Set(),search='',diagnostics=null,systemReport=null,profileDraft={},telegramConnection=null;
 
 async function api(path,options={}){
   const r=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Privet-Token':token,...options.headers}});
@@ -54,6 +54,7 @@ function render(s){
   $('#checkUpdate').hidden=!s.installed;
   apply.disabled=busy||!dirty;apply.textContent=dirty?'Применить выбор':'Изменений нет';
   const telegramSelected=draft.has('telegram');tg.hidden=!telegramSelected;tg.disabled=busy||!s.telegram_ready;
+  if(!s.telegram_ready){telegramConnection=null;$('#telegramSetup').hidden=true}
   $('#youtubePanel').hidden=!draft.has('youtube');
   $('#checkYouTube').disabled=busy||!s.active;
   $('#autoYouTube').disabled=busy||!s.active;
@@ -120,7 +121,21 @@ async function act(fn){if(busy)return;busy=true;if(status)render(status);try{awa
 
 $('#mainButton').onclick=()=>act(async()=>{if(!status.installed){await api('/api/install',{method:'POST'});if(dirty){await api('/api/services',{method:'POST',body:JSON.stringify({services:[...draft]})});dirty=false}}else if(status.needs_update)await api('/api/install',{method:'POST'});else if(status.active)await api('/api/stop',{method:'POST'});else await api('/api/start',{method:'POST'})});
 $('#removeButton').onclick=()=>{if(confirm('Удалить PrivetZapret и вернуть обычную работу сети?'))act(()=>api('/api/remove',{method:'POST'}))};
-$('#telegramButton').onclick=()=>act(async()=>{await api('/api/telegram/connect',{method:'POST'});toast('Подтвердите подключение в Telegram Desktop')});
+$('#telegramButton').onclick=()=>act(async()=>{
+  const connection=await api('/api/telegram/connect',{method:'POST'});
+  telegramConnection=connection;
+  $('#telegramServer').textContent=connection.server;
+  $('#telegramPort').textContent=connection.port;
+  $('#telegramSecret').textContent=connection.secret;
+  $('#telegramOpen').href=connection.url;
+  $('#telegramSetup').hidden=false;
+  window.location.href=connection.url;
+});
+$('#telegramCopySecret').onclick=async()=>{
+  if(!telegramConnection)return;
+  try{await navigator.clipboard.writeText(telegramConnection.secret);toast('Секрет скопирован')}
+  catch{toast('Выделите и скопируйте секрет вручную')}
+};
 $('#applyServices').onclick=()=>act(async()=>{const next=[...draft];await api('/api/services',{method:'POST',body:JSON.stringify({services:next})});dirty=false;toast('Выбор применён')});
 document.querySelectorAll('[data-youtube-profile]').forEach(button=>button.onclick=()=>act(async()=>{if(button.dataset.youtubeProfile===status.youtube_profile)return;await api('/api/youtube/profile',{method:'POST',body:JSON.stringify({profile:button.dataset.youtubeProfile})});diagnostics=null}));
 $('#checkYouTube').onclick=()=>act(async()=>{diagnostics=await api('/api/diagnostics')});

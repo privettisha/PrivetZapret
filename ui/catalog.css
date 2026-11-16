@@ -231,6 +231,14 @@
   margin: 0;
 }
 
+.telegram-setup { margin-top:16px; padding:16px; border:1px solid #bdc9c7; background:#fff; font-size:13px; }
+.telegram-setup p { margin:0 0 12px; line-height:1.5; }
+.telegram-setup-values { display:grid; gap:8px; }
+.telegram-setup-values span { display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; }
+.telegram-setup-values code { overflow-wrap:anywhere; font-size:12px; user-select:all; }
+.telegram-setup-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:14px; }
+.telegram-setup-actions a,.telegram-setup-actions button { border:0; background:transparent; color:var(--blue); font-size:12px; font-weight:700; text-decoration:underline; cursor:pointer; }
+
 .catalog-note,
 .catalog-empty {
   margin: 15px 0 0;

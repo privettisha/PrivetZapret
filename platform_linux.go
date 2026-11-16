@@ -458,12 +458,3 @@ func platformOpenBrowser(url string) {
 	}
 	_ = exec.Command("xdg-open", url).Start()
 }
-
-func platformConnectTelegram() error {
-	cfg := loadConfig(linuxConfigPath())
-	if cfg.TelegramSecret == "" || !telegramProxyReady() {
-		return errors.New("сначала запустите PrivetZapret")
-	}
-	platformOpenBrowser(telegramProxyURL(cfg.TelegramSecret))
-	return nil
-}

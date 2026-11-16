@@ -206,10 +206,16 @@ func main() {
 		return writeJSON(w, systemDiagnostics())
 	}))
 	mux.HandleFunc("POST /api/telegram/connect", api(token, func(w http.ResponseWriter, r *http.Request) error {
-		if err := platformConnectTelegram(); err != nil {
-			return err
+		cfg := loadConfig(platformConfigPath())
+		if cfg.TelegramSecret == "" || !telegramProxyReady() {
+			return fmt.Errorf("сначала запустите PrivetZapret")
 		}
-		return writeJSON(w, map[string]bool{"ok": true})
+		return writeJSON(w, map[string]any{
+			"server": "127.0.0.1",
+			"port":   tgProxyPort,
+			"secret": "dd" + cfg.TelegramSecret,
+			"url":    telegramProxyURL(cfg.TelegramSecret),
+		})
 	}))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

@@ -63,6 +63,18 @@
             <button class="primary apply-services" id="applyServices" disabled>Изменений нет</button>
             <button class="check connect" id="telegramButton">Подключить в Telegram <span aria-hidden="true">↗</span></button>
           </div>
+          <div class="telegram-setup" id="telegramSetup" hidden>
+            <p>Если Telegram не открылся, добавьте прокси MTProto вручную:</p>
+            <div class="telegram-setup-values">
+              <span>Сервер <code id="telegramServer"></code></span>
+              <span>Порт <code id="telegramPort"></code></span>
+              <span>Секрет <code id="telegramSecret"></code></span>
+            </div>
+            <div class="telegram-setup-actions">
+              <a id="telegramOpen" href="#">Открыть Telegram</a>
+              <button type="button" id="telegramCopySecret">Скопировать секрет</button>
+            </div>
+          </div>
         </section>
         <section class="settings-panel" aria-labelledby="settings-title">
           <div class="section-heading"><div><p class="section-marker">Настройки</p><h2 id="settings-title">Подключение</h2></div></div>

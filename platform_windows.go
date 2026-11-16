@@ -578,12 +578,3 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 func platformOpenBrowser(url string) {
 	_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 }
-
-func platformConnectTelegram() error {
-	cfg := loadConfig(windowsConfigPath())
-	if cfg.TelegramSecret == "" || !telegramProxyReady() {
-		return errors.New("сначала запустите PrivetZapret")
-	}
-	platformOpenBrowser(telegramProxyURL(cfg.TelegramSecret))
-	return nil
-}
