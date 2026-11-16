@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -96,6 +97,8 @@ func platformStatus() Status {
 	}
 	cfg := loadConfig(windowsConfigPath())
 	status := statusSettings(Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
+	status.DNSSupported = true
+	status.DNSActive = active && cfg.DNSEnabled && windowsDNSApplied()
 	_, err = os.Stat(rollbackPath())
 	status.RollbackAvailable = err == nil
 	return status
@@ -198,17 +201,68 @@ func platformStop() error {
 	defer m.Disconnect()
 	s, err := m.OpenService(serviceName)
 	if err != nil {
-		return nil
+		return restoreWindowsDNS()
 	}
 	defer s.Close()
 	q, err := s.Query()
 	if err == nil && q.State == svc.Stopped {
-		return nil
+		return restoreWindowsDNS()
 	}
 	if _, err := s.Control(svc.Stop); err != nil && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
 		return err
 	}
-	return waitWindowsState(s, svc.Stopped, 8*time.Second)
+	if err := waitWindowsState(s, svc.Stopped, 8*time.Second); err != nil {
+		return err
+	}
+	return restoreWindowsDNS()
+}
+
+func platformSetDNS(rawURL string, enabled bool) error {
+	cfg := loadConfig(windowsConfigPath())
+	if rawURL != "" {
+		url, err := validateDoHURL(rawURL)
+		if err != nil {
+			return err
+		}
+		cfg.DNSURL = url
+	}
+	if !enabled && !platformStatus().Active {
+		if err := restoreWindowsDNS(); err != nil {
+			return err
+		}
+	}
+	if enabled {
+		if cfg.DNSURL == "" {
+			return errors.New("вставьте ссылку DoH")
+		}
+		status := platformStatus()
+		if status.NeedsUpdate {
+			return errors.New("сначала обновите PrivetZapret до версии с системным DoH")
+		}
+		if !status.Active {
+			return errors.New("сначала запустите PrivetZapret")
+		}
+		state, err := readWindowsDNSState()
+		if errors.Is(err, os.ErrNotExist) {
+			state, err = windowsDNSOriginal()
+		}
+		if err != nil {
+			return err
+		}
+		proxy, err := newDNSProxy(cfg.DNSURL, state.Original)
+		if err != nil {
+			return err
+		}
+		defer proxy.Close()
+		query := []byte{0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0, 0, 1, 0, 1}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := proxy.doh(ctx, query); err != nil {
+			return fmt.Errorf("DoH-сервер не ответил: %w", err)
+		}
+	}
+	cfg.DNSEnabled = enabled
+	return platformApplyConfig(cfg)
 }
 
 func platformSetMode(mode string) error {
@@ -324,7 +378,9 @@ func platformOtherFilters() []string {
 }
 
 func platformRemove() error {
-	_ = platformStop()
+	if err := platformStop(); err != nil {
+		return err
+	}
 	m, err := mgr.Connect()
 	if err == nil {
 		if s, e := m.OpenService(serviceName); e == nil {
@@ -356,6 +412,12 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	dir := windowsInstallDir()
 	engineDir := windowsEngineDir()
 	cfg := loadConfig(windowsConfigPath())
+	defer func() { _ = restoreWindowsDNS() }()
+	if !cfg.DNSEnabled {
+		if err := restoreWindowsDNS(); err != nil {
+			return false, 5
+		}
+	}
 	if len(cfg.Services) == 0 {
 		return false, 4
 	}
@@ -381,10 +443,7 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	var tgCmd *exec.Cmd
 	var tgDone chan error
 	if hasService(cfg.Services, "telegram") {
-		tgCmd = exec.Command(filepath.Join(engineDir, "PrivetTgWs.exe"),
-			"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
-			"--log-file", filepath.Join(dir, "telegram.log"),
-			"--log-max-mb", "3", "--log-backups", "1")
+		tgCmd = exec.Command(filepath.Join(engineDir, "PrivetTgWs.exe"), telegramProxyArgs(dir)...)
 		tgCmd.Dir = engineDir
 		tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
 		tgCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -431,6 +490,46 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 		return false, 3
 	case <-time.After(700 * time.Millisecond):
 	}
+	var dnsRuntime *dnsProxy
+	stopDNS := func() {
+		if dnsRuntime != nil {
+			_ = restoreWindowsDNS()
+			dnsRuntime.Close()
+			dnsRuntime = nil
+		}
+	}
+	defer stopDNS()
+	if cfg.DNSEnabled {
+		state, err := readWindowsDNSState()
+		if errors.Is(err, os.ErrNotExist) {
+			state, err = windowsDNSOriginal()
+		}
+		if err != nil {
+			_ = zapCmd.Process.Kill()
+			if tgCmd != nil {
+				_ = tgCmd.Process.Kill()
+			}
+			return false, 5
+		}
+		proxy, err := newDNSProxy(cfg.DNSURL, state.Original)
+		if err == nil {
+			err = proxy.listen(state.IPv6Enabled)
+		}
+		if err == nil {
+			_, err = applyWindowsDNS()
+		}
+		if err != nil {
+			if proxy != nil {
+				proxy.Close()
+			}
+			_ = zapCmd.Process.Kill()
+			if tgCmd != nil {
+				_ = tgCmd.Process.Kill()
+			}
+			return false, 5
+		}
+		dnsRuntime = proxy
+	}
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	go autoUpdateLoop()
 	for {
@@ -440,11 +539,13 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 				_ = tgCmd.Process.Kill()
 				<-tgDone
 			}
+			stopDNS()
 			changes <- svc.Status{State: svc.Stopped}
 			return false, 2
 		case <-tgDone:
 			_ = zapCmd.Process.Kill()
 			<-zapDone
+			stopDNS()
 			changes <- svc.Status{State: svc.Stopped}
 			return false, 3
 		case c := <-requests:
@@ -466,6 +567,7 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 					case <-time.After(3 * time.Second):
 					}
 				}
+				stopDNS()
 				changes <- svc.Status{State: svc.Stopped}
 				return false, 0
 			}

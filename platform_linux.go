@@ -225,6 +225,12 @@ func platformSetYoutubeProfile(profile string) error {
 
 func platformConfigPath() string { return linuxConfigPath() }
 
+func platformProtectConfig(_ string) error { return nil }
+
+func platformSetDNS(_ string, _ bool) error {
+	return errors.New("системный DoH пока доступен только в версии для Windows")
+}
+
 func platformApplyConfig(cfg Config) error {
 	previous := loadConfig(linuxConfigPath())
 	wasActive := platformStatus().Active
@@ -331,10 +337,7 @@ func runLinuxDaemon() error {
 	var tgCmd *exec.Cmd
 	var tgDone chan error
 	if hasService(cfg.Services, "telegram") {
-		tgCmd = exec.Command(filepath.Join(linuxInstallDir, "PrivetTgWs"),
-			"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
-			"--log-file", filepath.Join(linuxInstallDir, "telegram.log"),
-			"--log-max-mb", "3", "--log-backups", "1")
+		tgCmd = exec.Command(filepath.Join(linuxInstallDir, "PrivetTgWs"), telegramProxyArgs(linuxInstallDir)...)
 		tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
 		tgCmd.Stdout, tgCmd.Stderr = os.Stdout, os.Stderr
 		if err := tgCmd.Start(); err != nil {

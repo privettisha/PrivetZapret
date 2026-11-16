@@ -31,6 +31,13 @@ var serviceCatalog = []ServiceDefinition{
 	}},
 	{ID: "telegram", Name: "Telegram Desktop", Category: "Основные", Description: "Встроенное локальное подключение", Default: true, Domains: []string{
 		"telegram.org", "t.me", "telegram.me", "telegra.ph", "web.telegram.org",
+		// Default CF fallback domains from pinned tg-ws-proxy. Its fallback
+		// route uses kwsN subdomains; the base domains match those hostnames.
+		"pclead.co.uk", "offshor.co.uk", "cakeisalie.co.uk", "noskomnadzor.co.uk",
+		"lovetrue.co.uk", "sorokdva.co.uk", "pyatdesyatdva.co.uk", "kartoshka.co.uk",
+		"sorokodin.co.uk", "pyatdesyatodin.co.uk", "notelega.co.uk", "ebally.co.uk",
+		"nebally.co.uk", "havegreatday.co.uk", "pomogite.co.uk", "fixtelega.co.uk",
+		"sadnews.co.uk", "onedaychamp.co.uk", "stopblocking.co.uk", "nothingthere.co.uk",
 	}},
 	{ID: "whatsapp", Name: "WhatsApp", Category: "Мессенджеры", Description: "Сайт и медиа", Domains: []string{
 		"whatsapp.com", "whatsapp.net", "wa.me", "whatsapp-cdn.net",

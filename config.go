@@ -14,7 +14,7 @@ import (
 const (
 	appName     = "PrivetZapret"
 	serviceName = "PrivetZapret"
-	appVersion  = "0.6.3"
+	appVersion  = "0.7.0"
 	tgProxyPort = 14430
 )
 
@@ -29,6 +29,8 @@ type Config struct {
 	GameMode       bool              `json:"game_mode,omitempty"`
 	AutoUpdate     bool              `json:"auto_update,omitempty"`
 	Profiles       map[string]string `json:"profiles,omitempty"`
+	DNSURL         string            `json:"dns_url,omitempty"`
+	DNSEnabled     bool              `json:"dns_enabled,omitempty"`
 }
 
 type Status struct {
@@ -49,6 +51,10 @@ type Status struct {
 	AutoUpdate        bool                `json:"auto_update"`
 	Profiles          map[string]string   `json:"profiles"`
 	RollbackAvailable bool                `json:"rollback_available"`
+	DNSURL            string              `json:"dns_url"`
+	DNSEnabled        bool                `json:"dns_enabled"`
+	DNSActive         bool                `json:"dns_active"`
+	DNSSupported      bool                `json:"dns_supported"`
 }
 
 func installedVersion(path string) string {
@@ -143,6 +149,10 @@ func saveConfigValue(path string, cfg Config) error {
 	if err := os.WriteFile(tmp, append(b, '\n'), 0600); err != nil {
 		return err
 	}
+	if err := platformProtectConfig(tmp); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
@@ -200,6 +210,8 @@ func statusSettings(status Status, cfg Config) Status {
 	status.GameMode = cfg.GameMode
 	status.AutoUpdate = cfg.AutoUpdate
 	status.Profiles = cfg.Profiles
+	status.DNSURL = cfg.DNSURL
+	status.DNSEnabled = cfg.DNSEnabled
 	return status
 }
 
@@ -218,6 +230,17 @@ func normalizeTelegramSecret(secret string) string {
 
 func telegramProxyURL(secret string) string {
 	return fmt.Sprintf("tg://proxy?server=127.0.0.1&port=%d&secret=dd%s", tgProxyPort, secret)
+}
+
+func telegramProxyArgs(logDir string) []string {
+	return []string{
+		"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
+		// The upstream default redirects both DC2 and DC4 to one IP. Its media
+		// guide recommends leaving only DC4 for non-Premium photo/video traffic.
+		"--dc-ip", "4:149.154.167.220",
+		"--log-file", filepath.Join(logDir, "telegram.log"),
+		"--log-max-mb", "3", "--log-backups", "1",
+	}
 }
 
 func telegramProxyReady() bool {

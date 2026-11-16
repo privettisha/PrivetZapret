@@ -135,6 +135,24 @@ func main() {
 		}
 		return writeJSON(w, platformStatus())
 	}))
+	mux.HandleFunc("POST /api/dns", api(token, func(w http.ResponseWriter, r *http.Request) error {
+		if !platformStatus().Installed {
+			return fmt.Errorf("сначала установите PrivetZapret")
+		}
+		var request struct {
+			URL     string `json:"url"`
+			Enabled bool   `json:"enabled"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			return fmt.Errorf("не удалось прочитать настройки DNS")
+		}
+		if err := platformSetDNS(request.URL, request.Enabled); err != nil {
+			return err
+		}
+		return writeJSON(w, platformStatus())
+	}))
 	mux.HandleFunc("POST /api/repair", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		if err := platformRepair(); err != nil {
 			return err

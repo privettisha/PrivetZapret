@@ -83,6 +83,14 @@
           </div>
           <button type="button" class="primary" id="saveSettings">Сохранить</button>
         </section>
+        <section class="dns-panel" id="dnsPanel" aria-labelledby="dns-title" hidden>
+          <div class="section-heading"><div><p class="section-marker">Системный DNS · Windows</p><h2 id="dns-title">Свой DoH</h2></div></div>
+          <p class="dns-description">Вставьте HTTPS-ссылку DoH. Системный DNS основного подключения Wi-Fi или Ethernet будет работать через неё, пока запущен PrivetZapret. Если сервер временно недоступен, запросы пойдут через прежние DNS-серверы подключения без шифрования.</p>
+          <label class="settings-field" for="dnsURL">Адрес DoH<input id="dnsURL" type="url" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://dns.example.com/dns-query"></label>
+          <label class="dns-switch"><input id="dnsEnable" type="checkbox"> Использовать как системный DNS</label>
+          <p id="dnsState" class="dns-state" role="status"></p>
+          <button type="button" class="primary" id="saveDNS">Применить DNS</button>
+        </section>
         <section class="tools-panel" aria-labelledby="tools-title">
           <div class="section-heading"><div><p class="section-marker">Система</p><h2 id="tools-title">Проверка</h2></div></div>
           <div class="tools-actions">

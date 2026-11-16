@@ -17,6 +17,8 @@ type SystemReport struct {
 	YoutubeProfile string                   `json:"youtube_profile"`
 	AutoHostlist   bool                     `json:"auto_hostlist"`
 	TelegramReady  bool                     `json:"telegram_ready"`
+	DNSEnabled     bool                     `json:"dns_enabled"`
+	DNSActive      bool                     `json:"dns_active"`
 	Conflicts      []string                 `json:"conflicts"`
 	VPNInterfaces  []string                 `json:"vpn_interfaces"`
 	Endpoints      map[string]EndpointCheck `json:"endpoints"`
@@ -30,6 +32,7 @@ func systemDiagnostics() SystemReport {
 		Services: status.Services, Profiles: status.Profiles,
 		YoutubeProfile: status.YoutubeProfile, AutoHostlist: status.AutoHostlist,
 		TelegramReady: status.TelegramReady, Conflicts: platformOtherFilters(),
+		DNSEnabled: status.DNSEnabled, DNSActive: status.DNSActive,
 		Endpoints: connectivityCheck(),
 	}
 	interfaces, _ := net.Interfaces()

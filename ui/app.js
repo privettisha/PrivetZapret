@@ -1,6 +1,6 @@
 const token=new URLSearchParams(location.search).get('token')||'';
 const $=s=>document.querySelector(s);
-let status=null,busy=false,dirty=false,settingsDirty=false,draft=new Set(),search='',diagnostics=null,systemReport=null,profileDraft={};
+let status=null,busy=false,dirty=false,settingsDirty=false,dnsDirty=false,draft=new Set(),search='',diagnostics=null,systemReport=null,profileDraft={};
 
 async function api(path,options={}){
   const r=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Privet-Token':token,...options.headers}});
@@ -74,6 +74,10 @@ function render(s){
     $('#genericProfile').value=s.profiles?.generic||'standard';
   }
   $('#saveSettings').disabled=busy||!s.installed;
+  $('#dnsPanel').hidden=!s.dns_supported;
+  if(!dnsDirty){$('#dnsURL').value=s.dns_url||'';$('#dnsEnable').checked=!!s.dns_enabled}
+  $('#dnsState').textContent=s.needs_update?'Для системного DoH сначала обновите PrivetZapret':s.dns_active?'Системный DNS подключён':s.dns_enabled?(s.active?'DNS не применён. Нажмите «Исправить» в разделе проверки.':'Ожидает запуска PrivetZapret'):'Системный DNS не подключён';
+  $('#saveDNS').disabled=busy||!s.installed;
   $('#repairButton').disabled=busy||!s.installed;
   $('#autoDiscord').disabled=busy||!s.active||!draft.has('discord');
   $('#rollbackButton').hidden=!s.rollback_available;
@@ -128,13 +132,18 @@ $('#saveSettings').onclick=()=>act(async()=>{
   await api('/api/settings',{method:'POST',body:JSON.stringify({custom_domains:lines('customDomains'),exclude_domains:lines('excludeDomains'),auto_hostlist:$('#autoHostlist').checked,game_mode:$('#gameMode').checked,auto_update:$('#autoUpdate').checked,profiles:{...profileDraft,discord:$('#discordProfile').value,generic:$('#genericProfile').value}})});
   settingsDirty=false;toast('Сохранено');
 });
+for(const control of [$('#dnsURL'),$('#dnsEnable')])control.oninput=()=>{dnsDirty=true};
+$('#saveDNS').onclick=()=>act(async()=>{
+  await api('/api/dns',{method:'POST',body:JSON.stringify({url:$('#dnsURL').value,enabled:$('#dnsEnable').checked})});
+  dnsDirty=false;toast('Настройки DNS применены');
+});
 $('#repairButton').onclick=()=>act(async()=>{await api('/api/repair',{method:'POST'});toast('Готово')});
 $('#systemCheck').onclick=()=>act(async()=>{systemReport=await api('/api/system');renderSystem()});
 function renderSystem(){
   const root=$('#systemResults');root.textContent='';root.hidden=!systemReport;
   $('#copyReport').hidden=!systemReport;
   if(!systemReport)return;
-  for(const [label,value] of [['Служба',systemReport.active?'Работает':'Остановлена'],['Другие фильтры',(systemReport.conflicts||[]).join(', ')||'Не найдены'],['VPN',(systemReport.vpn_interfaces||[]).join(', ')||'Не найден'],['YouTube',systemReport.endpoints?.youtube?.reachable?'Сайт отвечает':systemReport.endpoints?.youtube?.error||'Нет соединения'],['YouTube CDN',systemReport.endpoints?.video_server?.reachable?'Сервер отвечает':systemReport.endpoints?.video_server?.error||'Нет соединения'],['SoundCloud CDN',systemReport.endpoints?.soundcloud_media_server?.reachable?'Сервер отвечает':systemReport.endpoints?.soundcloud_media_server?.error||'Нет соединения']]){
+  for(const [label,value] of [['Служба',systemReport.active?'Работает':'Остановлена'],['Системный DNS',systemReport.dns_active?'Подключён':systemReport.dns_enabled?'Настроен, но не активен':'Выключен'],['Telegram-прокси',systemReport.telegram_ready?'Локальный порт отвечает':'Локальный порт не отвечает'],['Другие фильтры',(systemReport.conflicts||[]).join(', ')||'Не найдены'],['VPN',(systemReport.vpn_interfaces||[]).join(', ')||'Не найден'],['YouTube',systemReport.endpoints?.youtube?.reachable?'Сайт отвечает':systemReport.endpoints?.youtube?.error||'Нет соединения'],['YouTube CDN',systemReport.endpoints?.video_server?.reachable?'Сервер отвечает':systemReport.endpoints?.video_server?.error||'Нет соединения'],['SoundCloud CDN',systemReport.endpoints?.soundcloud_media_server?.reachable?'Сервер отвечает':systemReport.endpoints?.soundcloud_media_server?.error||'Нет соединения']]){
     const row=document.createElement('div'),a=document.createElement('span'),b=document.createElement('strong');a.textContent=label;b.textContent=value;row.append(a,b);root.append(row);
   }
 }
