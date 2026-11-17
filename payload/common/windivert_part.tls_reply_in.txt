@@ -1,0 +1,4 @@
+  inbound and
+  tcp.SrcPort=443 and
+  (tcp.Rst or
+   (tcp.PayloadLength>=5 and tcp.Payload[0]=0x16))

@@ -14,7 +14,7 @@ import (
 const (
 	appName     = "PrivetZapret"
 	serviceName = "PrivetZapret"
-	appVersion  = "0.7.1"
+	appVersion  = "0.7.2"
 	tgProxyPort = 14430
 )
 
@@ -25,7 +25,7 @@ type Config struct {
 	Services       []string          `json:"services"`
 	CustomDomains  []string          `json:"custom_domains,omitempty"`
 	ExcludeDomains []string          `json:"exclude_domains,omitempty"`
-	AutoHostlist   bool              `json:"auto_hostlist,omitempty"`
+	AutoHostlist   bool              `json:"auto_hostlist"`
 	GameMode       bool              `json:"game_mode,omitempty"`
 	AutoUpdate     bool              `json:"auto_update,omitempty"`
 	Profiles       map[string]string `json:"profiles,omitempty"`
@@ -84,7 +84,7 @@ func normalizeYoutubeProfile(profile string) string {
 }
 
 func loadConfig(path string) Config {
-	cfg := Config{Mode: "balanced", YoutubeProfile: "standard"}
+	cfg := Config{Mode: "balanced", YoutubeProfile: "standard", AutoHostlist: true}
 	b, err := os.ReadFile(path)
 	if err == nil {
 		_ = json.Unmarshal(b, &cfg)

@@ -205,10 +205,10 @@ func main() {
 	mux.HandleFunc("GET /api/system", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		return writeJSON(w, systemDiagnostics())
 	}))
-	mux.HandleFunc("POST /api/telegram/connect", api(token, func(w http.ResponseWriter, r *http.Request) error {
+	mux.HandleFunc("GET /api/telegram/connect", api(token, func(w http.ResponseWriter, r *http.Request) error {
 		cfg := loadConfig(platformConfigPath())
-		if cfg.TelegramSecret == "" || !telegramProxyReady() {
-			return fmt.Errorf("сначала запустите PrivetZapret")
+		if !platformStatus().Installed || !hasService(cfg.Services, "telegram") || cfg.TelegramSecret == "" {
+			return fmt.Errorf("сначала установите PrivetZapret с Telegram")
 		}
 		return writeJSON(w, map[string]any{
 			"server": "127.0.0.1",

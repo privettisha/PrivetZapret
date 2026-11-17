@@ -21,8 +21,18 @@
       <div class="hero-copy">
         <p class="intro-line"><span class="signal-dot" aria-hidden="true"></span> Выборочная обработка соединений</p>
         <h1 id="state">Проверяем состояние…</h1>
-        <p class="hero-description" id="subtitle">Только выбранные сервисы. Остальной трафик идёт напрямую.</p>
-        <div class="hero-actions"><button class="primary" id="mainButton" disabled>Подождите</button><button type="button" class="hero-update" id="checkUpdate" hidden>Обновить</button></div>
+        <p class="hero-description" id="subtitle">Выбранные сервисы и обнаруженные блокировки. Остальной трафик идёт напрямую.</p>
+        <div class="hero-actions"><button class="primary" id="mainButton" disabled>Подождите</button><button type="button" class="hero-update" id="checkUpdate" hidden>Обновить</button><button type="button" class="check connect hero-telegram" id="telegramButton" hidden>Подключить в Telegram <span aria-hidden="true">↗</span></button></div>
+        <div class="telegram-setup" id="telegramSetup" hidden>
+          <p>Прокси MTProto на этом компьютере. Для ручного подключения в Telegram скопируйте значения по отдельности:</p>
+          <div class="telegram-setup-values">
+            <div class="telegram-value"><span>Сервер</span><code id="telegramServer"></code><button type="button" data-copy-telegram="server">Скопировать сервер</button></div>
+            <div class="telegram-value"><span>Порт</span><code id="telegramPort"></code><button type="button" data-copy-telegram="port">Скопировать порт</button></div>
+            <div class="telegram-value"><span>Секрет</span><code id="telegramSecret"></code><button type="button" data-copy-telegram="secret">Скопировать секрет</button></div>
+          </div>
+          <p id="telegramNotice" class="telegram-notice"></p>
+          <div class="telegram-setup-actions"><a id="telegramOpen" href="#">Открыть Telegram</a></div>
+        </div>
       </div>
       <div class="route-graphic" aria-label="Схема работы PrivetZapret">
         <div class="route-top"><span>Маршрут соединения</span><span class="route-index">LOCAL / 01</span></div>
@@ -61,19 +71,6 @@
           <div class="service-catalog" id="serviceCatalog"></div>
           <div class="catalog-actions">
             <button class="primary apply-services" id="applyServices" disabled>Изменений нет</button>
-            <button class="check connect" id="telegramButton">Подключить в Telegram <span aria-hidden="true">↗</span></button>
-          </div>
-          <div class="telegram-setup" id="telegramSetup" hidden>
-            <p>Если Telegram не открылся, добавьте прокси MTProto вручную:</p>
-            <div class="telegram-setup-values">
-              <span>Сервер <code id="telegramServer"></code></span>
-              <span>Порт <code id="telegramPort"></code></span>
-              <span>Секрет <code id="telegramSecret"></code></span>
-            </div>
-            <div class="telegram-setup-actions">
-              <a id="telegramOpen" href="#">Открыть Telegram</a>
-              <button type="button" id="telegramCopySecret">Скопировать секрет</button>
-            </div>
           </div>
         </section>
         <section class="settings-panel" aria-labelledby="settings-title">
@@ -89,7 +86,7 @@
           <button type="button" class="text-action" id="autoDiscord">Подобрать для Discord</button>
           <div id="serviceProfiles" class="service-profiles"></div>
           <div class="settings-switches">
-            <label><input type="checkbox" id="autoHostlist"> Автосписок доменов</label>
+            <label><input type="checkbox" id="autoHostlist"> Автоподбор заблокированных доменов</label>
             <label><input type="checkbox" id="gameMode"> Игровой режим</label>
             <label><input type="checkbox" id="autoUpdate"> Автообновление</label>
           </div>

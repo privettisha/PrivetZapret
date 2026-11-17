@@ -88,7 +88,7 @@ func runTray(url string, server *http.Server) error {
 		})
 	}
 	menu.AddSeparator()
-	menu.Add("Выход", func() {
+	menu.Add("Закрыть окно (служба продолжит работу)", func() {
 		tray.Remove()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

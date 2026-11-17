@@ -46,15 +46,19 @@ function render(s){
   const orb=$('#orb'),btn=$('#mainButton'),tg=$('#telegramButton'),apply=$('#applyServices');
   const count=draft.size;$('#selectedCount').textContent=`${plural(count)} выбрано`;$('#routeServices').textContent=plural(count);
   orb.className='orb '+(s.active?'active':'inactive');
-  if(!s.installed){$('#state').textContent='Готов к установке';$('#subtitle').textContent='Выберите нужные сервисы и установите приложение.';btn.textContent='Установить';btn.className='primary';$('#removeButton').hidden=true}
+  if(s.active){$('#state').textContent='Подключение активно';$('#subtitle').textContent=`Выбрано: ${plural((s.services||[]).length)}.${s.auto_hostlist?' Дополнительные блокировки определяются автоматически.':''} Остальной трафик идёт напрямую.`;btn.textContent='Остановить';btn.className='primary stop';$('#removeButton').hidden=!s.installed}
+  else if(!s.installed){$('#state').textContent='Готов к установке';$('#subtitle').textContent='Выберите нужные сервисы и установите приложение.';btn.textContent='Установить';btn.className='primary';$('#removeButton').hidden=true}
   else if(s.needs_update){$('#state').textContent='Доступно обновление';$('#subtitle').textContent='Настройки и ключ Telegram сохранятся.';btn.textContent='Запустить';btn.className='primary';$('#removeButton').hidden=false}
-  else if(s.active){$('#state').textContent='Подключение активно';$('#subtitle').textContent=`Локально обрабатывается: ${plural((s.services||[]).length)}. Остальной трафик идёт напрямую.`;btn.textContent='Остановить';btn.className='primary stop';$('#removeButton').hidden=false}
   else{$('#state').textContent='Подключение остановлено';$('#subtitle').textContent='Выбор сохранён. Нажмите кнопку, чтобы снова включить.';btn.textContent='Запустить';btn.className='primary';$('#removeButton').hidden=false}
   btn.disabled=busy;
   $('#checkUpdate').hidden=!s.installed;
   apply.disabled=busy||!dirty;apply.textContent=dirty?'Применить выбор':'Изменений нет';
-  const telegramSelected=draft.has('telegram');tg.hidden=!telegramSelected;tg.disabled=busy||!s.telegram_ready;
-  if(!s.telegram_ready){telegramConnection=null;$('#telegramSetup').hidden=true}
+  const telegramSelected=s.installed&&(s.services||[]).includes('telegram');
+  if(!telegramSelected)telegramConnection=null;
+  tg.hidden=!telegramSelected;tg.disabled=busy||!s.telegram_ready||!telegramConnection;
+  $('#telegramSetup').hidden=!telegramConnection;
+  $('#telegramOpen').hidden=!s.telegram_ready;
+  $('#telegramNotice').textContent=s.telegram_ready?'Прокси запущен. Сервер 127.0.0.1 доступен только на этом компьютере.':'Прокси остановлен. Сохранённые параметры заработают после запуска PrivetZapret.';
   $('#youtubePanel').hidden=!draft.has('youtube');
   $('#checkYouTube').disabled=busy||!s.active;
   $('#autoYouTube').disabled=busy||!s.active;
@@ -116,26 +120,35 @@ function renderDiagnostics(){
     row.append(name,value);root.append(row);
   }
 }
-async function refresh(){try{render(await api('/api/status'))}catch(e){toast(e.message)}}
-async function act(fn){if(busy)return;busy=true;if(status)render(status);try{await fn();await refresh()}catch(e){toast(e.message)}finally{busy=false;if(status)render(status)}}
+async function refresh(){try{
+  const next=await api('/api/status');render(next);
+  if(next.installed&&(next.services||[]).includes('telegram')&&!telegramConnection){
+    try{
+      const connection=await api('/api/telegram/connect');
+      telegramConnection=connection;
+      $('#telegramServer').textContent=connection.server;
+      $('#telegramPort').textContent=String(connection.port);
+      $('#telegramSecret').textContent=connection.secret;
+      $('#telegramOpen').href=connection.url;
+      render(next);
+    }catch(e){toast(e.message)}
+  }
+}catch(e){toast(e.message)}}
+async function act(fn){if(busy)return;busy=true;if(status)render(status);try{await fn()}catch(e){toast(e.message)}finally{await refresh();busy=false;if(status)render(status)}}
 
-$('#mainButton').onclick=()=>act(async()=>{if(!status.installed){await api('/api/install',{method:'POST'});if(dirty){await api('/api/services',{method:'POST',body:JSON.stringify({services:[...draft]})});dirty=false}}else if(status.needs_update)await api('/api/install',{method:'POST'});else if(status.active)await api('/api/stop',{method:'POST'});else await api('/api/start',{method:'POST'})});
+$('#mainButton').onclick=()=>act(async()=>{if(status.active)await api('/api/stop',{method:'POST'});else if(!status.installed){await api('/api/install',{method:'POST'});if(dirty){await api('/api/services',{method:'POST',body:JSON.stringify({services:[...draft]})});dirty=false}}else if(status.needs_update)await api('/api/install',{method:'POST'});else await api('/api/start',{method:'POST'})});
 $('#removeButton').onclick=()=>{if(confirm('Удалить PrivetZapret и вернуть обычную работу сети?'))act(()=>api('/api/remove',{method:'POST'}))};
-$('#telegramButton').onclick=()=>act(async()=>{
-  const connection=await api('/api/telegram/connect',{method:'POST'});
-  telegramConnection=connection;
-  $('#telegramServer').textContent=connection.server;
-  $('#telegramPort').textContent=connection.port;
-  $('#telegramSecret').textContent=connection.secret;
-  $('#telegramOpen').href=connection.url;
-  $('#telegramSetup').hidden=false;
-  window.location.href=connection.url;
-});
-$('#telegramCopySecret').onclick=async()=>{
+$('#telegramButton').onclick=()=>{if(telegramConnection&&status.telegram_ready)window.location.href=telegramConnection.url};
+document.querySelectorAll('[data-copy-telegram]').forEach(button=>button.onclick=async()=>{
   if(!telegramConnection)return;
-  try{await navigator.clipboard.writeText(telegramConnection.secret);toast('Секрет скопирован')}
-  catch{toast('Выделите и скопируйте секрет вручную')}
-};
+  const value=String(telegramConnection[button.dataset.copyTelegram]);
+  try{await navigator.clipboard.writeText(value);toast('Скопировано')}
+  catch{
+    const field=document.createElement('textarea');field.value=value;field.style.position='fixed';field.style.left='-9999px';document.body.append(field);field.select();
+    const copied=document.execCommand('copy');field.remove();
+    toast(copied?'Скопировано':'Выделите и скопируйте значение вручную');
+  }
+});
 $('#applyServices').onclick=()=>act(async()=>{const next=[...draft];await api('/api/services',{method:'POST',body:JSON.stringify({services:next})});dirty=false;toast('Выбор применён')});
 document.querySelectorAll('[data-youtube-profile]').forEach(button=>button.onclick=()=>act(async()=>{if(button.dataset.youtubeProfile===status.youtube_profile)return;await api('/api/youtube/profile',{method:'POST',body:JSON.stringify({profile:button.dataset.youtubeProfile})});diagnostics=null}));
 $('#checkYouTube').onclick=()=>act(async()=>{diagnostics=await api('/api/diagnostics')});

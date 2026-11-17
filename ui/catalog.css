@@ -238,6 +238,13 @@
 .telegram-setup-values code { overflow-wrap:anywhere; font-size:12px; user-select:all; }
 .telegram-setup-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:14px; }
 .telegram-setup-actions a,.telegram-setup-actions button { border:0; background:transparent; color:var(--blue); font-size:12px; font-weight:700; text-decoration:underline; cursor:pointer; }
+.hero-actions .hero-telegram { width:auto; min-width:225px; margin:0; }
+.hero-copy .telegram-setup { max-width:650px; margin-top:18px; }
+.telegram-value { display:grid; grid-template-columns:58px minmax(0,1fr) auto; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
+.telegram-value span { color:var(--muted); }
+.telegram-value button { padding:7px 9px; border:1px solid var(--blue); border-radius:3px; background:#fff; color:var(--blue); font-size:11px; font-weight:700; cursor:pointer; }
+.telegram-value button:hover { background:var(--blue); color:#fff; }
+.telegram-setup .telegram-notice { margin:12px 0 0; color:var(--muted); font-size:12px; }
 
 .catalog-note,
 .catalog-empty {
@@ -261,6 +268,9 @@
 
 @media (max-width: 560px) {
   .hero-update { width:100%; }
+  .hero-actions .hero-telegram { width:100%; }
+  .telegram-value { grid-template-columns:58px minmax(0,1fr); }
+  .telegram-value button { grid-column:2; justify-self:start; }
   .settings-grid { grid-template-columns:1fr; }
   .service-profiles { grid-template-columns:1fr; }
   .tools-actions button { flex:1; }

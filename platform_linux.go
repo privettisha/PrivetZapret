@@ -160,10 +160,43 @@ func platformStart() error {
 
 func platformStop() error {
 	out, err := exec.Command("systemctl", "stop", "privetzapret.service").CombinedOutput()
+	// The nft queue and engine may survive a crashed or manually killed daemon.
+	// Clean up only PrivetZapret's own resources even if systemd reports failure.
+	orphanErr := stopLinuxEngines()
+	_ = deleteNftTable()
 	if err != nil {
-		return fmt.Errorf("остановка: %s", strings.TrimSpace(string(out)))
+		return errors.Join(fmt.Errorf("остановка: %s", strings.TrimSpace(string(out))), orphanErr)
 	}
-	return nil
+	return orphanErr
+}
+
+func stopLinuxEngines() error {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return err
+	}
+	var stopErr error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid := 0
+		if _, err := fmt.Sscanf(entry.Name(), "%d", &pid); err != nil || pid <= 1 {
+			continue
+		}
+		exe, err := os.Readlink(filepath.Join("/proc", entry.Name(), "exe"))
+		if err != nil {
+			continue
+		}
+		exe = strings.TrimSuffix(exe, " (deleted)")
+		if exe != filepath.Join(linuxInstallDir, "nfqws2") && exe != filepath.Join(linuxInstallDir, "PrivetTgWs") {
+			continue
+		}
+		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			stopErr = errors.Join(stopErr, fmt.Errorf("остановка движка %d: %w", pid, err))
+		}
+	}
+	return stopErr
 }
 
 func platformSetMode(mode string) error {
@@ -301,11 +334,18 @@ func platformOtherFilters() []string {
 }
 
 func platformRemove() error {
-	_ = platformStop()
-	_ = exec.Command("systemctl", "disable", "privetzapret.service").Run()
-	_ = os.Remove(linuxUnitPath)
-	_ = exec.Command("systemctl", "daemon-reload").Run()
-	_ = deleteNftTable()
+	if err := platformStop(); err != nil {
+		return err
+	}
+	if out, err := exec.Command("systemctl", "disable", "privetzapret.service").CombinedOutput(); err != nil {
+		return fmt.Errorf("отключение службы: %s", strings.TrimSpace(string(out)))
+	}
+	if err := os.Remove(linuxUnitPath); err != nil {
+		return err
+	}
+	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		return fmt.Errorf("обновление служб: %s", strings.TrimSpace(string(out)))
+	}
 	return os.RemoveAll(linuxInstallDir)
 }
 
@@ -431,6 +471,7 @@ func applyNftTable(cfg Config) error {
     type filter hook input priority -101; policy accept;
     ip saddr { 2.26.225.138, 31.76.251.3 } accept
     meta mark and 0x40000000 == 0 meta l4proto tcp tcp sport 443 ct reply packets 1-12 queue num 300 bypass
+    meta mark and 0x40000000 == 0 meta l4proto udp udp sport 443 ct reply packets 1-12 queue num 300 bypass
   }
 `
 	}
