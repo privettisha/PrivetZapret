@@ -22,6 +22,8 @@ var commonFiles = []string{
 	"TG-WS-PROXY-LICENSE.txt",
 	"windivert_part.discord_media.txt",
 	"windivert_part.quic_initial_ietf.txt",
+	"windivert_part.quic_initial_in.txt",
+	"windivert_part.tls_reply_in.txt",
 }
 
 func extractCommon(dir string) error {
@@ -107,6 +109,13 @@ func strategyArgsConfig(dir string, cfg Config) []string {
 			"--lua-desync="+youtubeSplit,
 			"--new",
 
+			// A stalled googlevideo QUIC session prevents playback even when the
+			// YouTube page loads. Force only media hosts onto the TCP rule above.
+			"--filter-udp=443", "--filter-l7=quic", proxyExcludes, "--hostlist="+p("selected-youtube-media.txt"))
+		args = append(args, exclude...)
+		args = append(args,
+			"--payload=quic_initial", "--lua-desync=drop", "--new",
+
 			"--filter-udp=443", "--filter-l7=quic", proxyExcludes, "--hostlist="+p("selected-youtube.txt"))
 		args = append(args, exclude...)
 		args = append(args,
@@ -127,6 +136,11 @@ func strategyArgsConfig(dir string, cfg Config) []string {
 			"--lua-desync="+fake,
 			"--lua-desync="+splitMode,
 			"--new",
+
+			"--filter-udp=443", "--filter-l7=quic", proxyExcludes, "--hostlist="+p("selected-discord-media.txt"))
+		args = append(args, exclude...)
+		args = append(args,
+			"--payload=quic_initial", "--lua-desync=drop", "--new",
 
 			"--filter-udp=443", "--filter-l7=quic", proxyExcludes, "--hostlist="+p("selected-discord.txt"))
 		args = append(args, exclude...)
@@ -168,15 +182,19 @@ func strategyArgsConfig(dir string, cfg Config) []string {
 	if cfg.AutoHostlist {
 		fake, splitMode, quic := profileStrategy(cfg.Profiles["generic"], repeats, split)
 		args = append(args, "--filter-tcp=443", "--filter-l7=tls", proxyExcludes,
-			"--hostlist-auto="+p("selected-auto.txt"))
+			"--hostlist-auto="+p("selected-auto.txt"), "--hostlist-auto-fail-threshold=2", "--hostlist-auto-incoming-maxseq=1")
 		args = append(args, exclude...)
 		args = append(args, "--out-range=-d10", "--payload=tls_client_hello",
 			"--lua-desync="+fake, "--lua-desync="+splitMode, "--new")
-		// A hostname learned from failed TCP attempts may later be used over
-		// QUIC. Apply the same learned list there too, without catching all
-		// unrelated UDP/443 traffic.
+		// An already learned media host must fall back to TCP immediately.
 		args = append(args, "--filter-udp=443", "--filter-l7=quic", proxyExcludes,
 			"--hostlist="+p("selected-auto.txt"))
+		args = append(args, exclude...)
+		args = append(args, "--payload=quic_initial", "--lua-desync=drop", "--new")
+		// Unknown media CDNs can be blocked over QUIC before any TCP request.
+		// Observe failures on UDP as well, then use the rule above on retry.
+		args = append(args, "--filter-udp=443", "--filter-l7=quic", proxyExcludes,
+			"--hostlist-auto="+p("selected-auto.txt"), "--hostlist-auto-fail-threshold=2")
 		args = append(args, exclude...)
 		args = append(args, "--payload=quic_initial", "--lua-desync="+quic, "--new")
 	}

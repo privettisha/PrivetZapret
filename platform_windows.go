@@ -95,6 +95,9 @@ func platformStatus() Status {
 			s.Close()
 		}
 	}
+	if orphan, _ := windowsEngines(false); orphan {
+		active = true
+	}
 	cfg := loadConfig(windowsConfigPath())
 	status := statusSettings(Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
 	status.DNSSupported = true
@@ -105,7 +108,8 @@ func platformStatus() Status {
 }
 
 func platformInstall(mode string) error {
-	if platformStatus().Installed {
+	status := platformStatus()
+	if status.Installed || status.Active {
 		if err := platformStop(); err != nil {
 			return fmt.Errorf("не удалось остановить предыдущую версию: %w", err)
 		}
@@ -199,22 +203,28 @@ func platformStop() error {
 		return err
 	}
 	defer m.Disconnect()
+	var stopErr error
 	s, err := m.OpenService(serviceName)
-	if err != nil {
-		return restoreWindowsDNS()
+	if err == nil {
+		defer s.Close()
+		q, queryErr := s.Query()
+		if queryErr != nil {
+			stopErr = queryErr
+		} else if q.State != svc.Stopped {
+			if _, controlErr := s.Control(svc.Stop); controlErr != nil && !errors.Is(controlErr, windows.ERROR_SERVICE_NOT_ACTIVE) {
+				stopErr = controlErr
+			} else {
+				stopErr = waitWindowsState(s, svc.Stopped, 8*time.Second)
+			}
+		}
+	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		stopErr = err
 	}
-	defer s.Close()
-	q, err := s.Query()
-	if err == nil && q.State == svc.Stopped {
-		return restoreWindowsDNS()
-	}
-	if _, err := s.Control(svc.Stop); err != nil && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
-		return err
-	}
-	if err := waitWindowsState(s, svc.Stopped, 8*time.Second); err != nil {
-		return err
-	}
-	return restoreWindowsDNS()
+	// A crashed service can leave winws2 or the Telegram proxy running on its
+	// own. Only terminate executables inside this application's install dir.
+	engineErr := stopWindowsEngines()
+	dnsErr := restoreWindowsDNS()
+	return errors.Join(stopErr, engineErr, dnsErr)
 }
 
 func platformSetDNS(rawURL string, enabled bool) error {
@@ -382,15 +392,71 @@ func platformRemove() error {
 		return err
 	}
 	m, err := mgr.Connect()
-	if err == nil {
-		if s, e := m.OpenService(serviceName); e == nil {
-			_ = s.Delete()
-			s.Close()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	if s, err := m.OpenService(serviceName); err == nil {
+		deleteErr := s.Delete()
+		s.Close()
+		if deleteErr != nil {
+			return fmt.Errorf("удаление службы: %w", deleteErr)
 		}
-		m.Disconnect()
+	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return fmt.Errorf("поиск службы: %w", err)
 	}
 	time.Sleep(250 * time.Millisecond)
 	return os.RemoveAll(windowsInstallDir())
+}
+
+func stopWindowsEngines() error {
+	_, err := windowsEngines(true)
+	return err
+}
+
+func windowsEngines(terminate bool) (bool, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return false, err
+	}
+	defer windows.CloseHandle(snapshot)
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	if err := windows.Process32First(snapshot, &entry); err != nil {
+		return false, err
+	}
+	installDir := strings.ToLower(filepath.Clean(windowsInstallDir())) + `\`
+	found := false
+	for {
+		name := strings.ToLower(windows.UTF16ToString(entry.ExeFile[:]))
+		if name == "winws2.exe" || name == "privettgws.exe" {
+			access := uint32(windows.PROCESS_QUERY_LIMITED_INFORMATION)
+			if terminate {
+				access |= windows.PROCESS_TERMINATE | windows.SYNCHRONIZE
+			}
+			process, openErr := windows.OpenProcess(access, false, entry.ProcessID)
+			if openErr == nil {
+				path := make([]uint16, 32768)
+				size := uint32(len(path))
+				if queryErr := windows.QueryFullProcessImageName(process, 0, &path[0], &size); queryErr == nil &&
+					strings.HasPrefix(strings.ToLower(filepath.Clean(windows.UTF16ToString(path[:size]))), installDir) {
+					found = true
+					if terminate {
+						if killErr := windows.TerminateProcess(process, 0); killErr != nil {
+							windows.CloseHandle(process)
+							return found, fmt.Errorf("остановка %s: %w", name, killErr)
+						}
+						_, _ = windows.WaitForSingleObject(process, 3000)
+					}
+				}
+				windows.CloseHandle(process)
+			}
+		}
+		if err := windows.Process32Next(snapshot, &entry); err != nil {
+			break
+		}
+	}
+	return found, nil
 }
 
 func waitWindowsState(s *mgr.Service, wanted svc.State, timeout time.Duration) error {
@@ -434,7 +500,8 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 		args[1] = "--wf-udp-out=443,19294-19344,50000-50100,3074,3478-3480,3659"
 	}
 	if cfg.AutoHostlist {
-		args = append(args, "--wf-tcp-in=443")
+		args = append(args, "--wf-raw-part=@"+filepath.Join(engineDir, "windivert_part.tls_reply_in.txt"))
+		args = append(args, "--wf-raw-part=@"+filepath.Join(engineDir, "windivert_part.quic_initial_in.txt"))
 	}
 	args = append(args, strategyArgsConfig(engineDir, cfg)...)
 	zapCmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)

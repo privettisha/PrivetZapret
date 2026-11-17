@@ -1,0 +1,4 @@
+  inbound and
+  udp.SrcPort=443 and
+  udp.PayloadLength>=256 and
+  udp.Payload[0]>=0xC0 and udp.Payload[0]<0xF0

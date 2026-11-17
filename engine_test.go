@@ -46,6 +46,10 @@ func TestYoutubeProfilesAcceptedByZapret2(t *testing.T) {
 	if err := writeSelectedHostlists(dir, defaultServices()); err != nil {
 		t.Fatal(err)
 	}
+	media, err := os.ReadFile(filepath.Join(dir, "selected-youtube-media.txt"))
+	if err != nil || string(media) != "googlevideo.com\n" {
+		t.Fatalf("YouTube media list must contain only googlevideo.com: %q, %v", media, err)
+	}
 	engine := filepath.Join(dir, "nfqws2")
 	b, err := os.ReadFile("payload/linux/nfqws2")
 	if err != nil {
@@ -64,6 +68,10 @@ func TestYoutubeProfilesAcceptedByZapret2(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(strategyArgs(dir, "balanced", defaultServices(), "tcp"), " "), "--lua-desync=drop") {
 		t.Fatal("TCP fallback must suppress YouTube QUIC")
+	}
+	joined := strings.Join(strategyArgs(dir, "balanced", defaultServices(), "standard"), " ")
+	if !strings.Contains(joined, "--hostlist="+filepath.Join(dir, "selected-youtube-media.txt")+" --payload=quic_initial --lua-desync=drop") {
+		t.Fatal("YouTube media must fall back to TCP separately from the web page")
 	}
 }
 
@@ -136,6 +144,13 @@ func TestExtendedConfigurationAcceptedByZapret2(t *testing.T) {
 	}
 	if !strings.Contains(joined, "--filter-udp=443 --filter-l7=quic --ipset-exclude-ip=2.26.225.138,31.76.251.3 --hostlist="+filepath.Join(dir, "selected-auto.txt")) {
 		t.Fatal("auto-learned hosts must also be covered over QUIC")
+	}
+	if !strings.Contains(joined, "--filter-udp=443 --filter-l7=quic --ipset-exclude-ip=2.26.225.138,31.76.251.3 --hostlist-auto="+filepath.Join(dir, "selected-auto.txt")) {
+		t.Fatal("QUIC failures must be learned for media hosts outside the page domain")
+	}
+	mediaParts := strings.SplitN(joined, "--hostlist="+filepath.Join(dir, "selected-discord-media.txt"), 2)
+	if len(mediaParts) != 2 || !strings.Contains(strings.SplitN(mediaParts[1], " --new", 2)[0], "--lua-desync=drop") {
+		t.Fatal("Discord media must fall back to TCP independently from chat")
 	}
 }
 

@@ -49,6 +49,16 @@ func TestOldConfigGetsSafeDefaultServices(t *testing.T) {
 	if strings.Join(cfg.Services, ",") != "youtube,discord,telegram" {
 		t.Fatalf("unexpected defaults: %#v", cfg.Services)
 	}
+	if !cfg.AutoHostlist {
+		t.Fatal("legacy configuration must enable adaptive host learning")
+	}
+	cfg.AutoHostlist = false
+	if err := saveConfigValue(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if loadConfig(path).AutoHostlist {
+		t.Fatal("explicitly disabled adaptive host learning was not preserved")
+	}
 }
 
 func TestServiceSelectionIsNormalizedAndPreserved(t *testing.T) {
