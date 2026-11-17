@@ -172,6 +172,9 @@ func platformInstall(mode string) error {
 		}
 	}
 	defer s.Close()
+	if err := setWindowsServiceStartup(s, mgr.StartAutomatic); err != nil {
+		return fmt.Errorf("включение автозапуска службы: %w", err)
+	}
 	_ = s.SetRecoveryActions([]mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 2 * time.Second}}, 86400)
 	_ = s.SetRecoveryActionsOnNonCrashFailures(true)
 	if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
@@ -191,6 +194,9 @@ func platformStart() error {
 		return errors.New("сначала установите PrivetZapret")
 	}
 	defer s.Close()
+	if err := setWindowsServiceStartup(s, mgr.StartAutomatic); err != nil {
+		return fmt.Errorf("включение службы: %w", err)
+	}
 	if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
 		return err
 	}
@@ -217,6 +223,7 @@ func platformStop() error {
 				stopErr = waitWindowsState(s, svc.Stopped, 8*time.Second)
 			}
 		}
+		stopErr = errors.Join(stopErr, setWindowsServiceStartup(s, mgr.StartDisabled))
 	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		stopErr = err
 	}
@@ -225,6 +232,18 @@ func platformStop() error {
 	engineErr := stopWindowsEngines()
 	dnsErr := restoreWindowsDNS()
 	return errors.Join(stopErr, engineErr, dnsErr)
+}
+
+func setWindowsServiceStartup(s *mgr.Service, startType uint32) error {
+	cfg, err := s.Config()
+	if err != nil {
+		return err
+	}
+	if cfg.StartType == startType {
+		return nil
+	}
+	cfg.StartType = startType
+	return s.UpdateConfig(cfg)
 }
 
 func platformSetDNS(rawURL string, enabled bool) error {
