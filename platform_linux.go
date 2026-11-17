@@ -151,7 +151,7 @@ WantedBy=multi-user.target
 }
 
 func platformStart() error {
-	out, err := exec.Command("systemctl", "start", "privetzapret.service").CombinedOutput()
+	out, err := exec.Command("systemctl", "enable", "--now", "privetzapret.service").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("запуск: %s", strings.TrimSpace(string(out)))
 	}
@@ -159,7 +159,7 @@ func platformStart() error {
 }
 
 func platformStop() error {
-	out, err := exec.Command("systemctl", "stop", "privetzapret.service").CombinedOutput()
+	out, err := exec.Command("systemctl", "disable", "--now", "privetzapret.service").CombinedOutput()
 	// The nft queue and engine may survive a crashed or manually killed daemon.
 	// Clean up only PrivetZapret's own resources even if systemd reports failure.
 	orphanErr := stopLinuxEngines()
@@ -336,9 +336,6 @@ func platformOtherFilters() []string {
 func platformRemove() error {
 	if err := platformStop(); err != nil {
 		return err
-	}
-	if out, err := exec.Command("systemctl", "disable", "privetzapret.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("отключение службы: %s", strings.TrimSpace(string(out)))
 	}
 	if err := os.Remove(linuxUnitPath); err != nil {
 		return err
