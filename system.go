@@ -14,6 +14,7 @@ type SystemReport struct {
 	Platform            string                   `json:"platform"`
 	Installed           bool                     `json:"installed"`
 	Active              bool                     `json:"active"`
+	EngineProcesses     int                      `json:"engine_processes"`
 	Services            []string                 `json:"services"`
 	Profiles            map[string]string        `json:"profiles"`
 	YoutubeProfile      string                   `json:"youtube_profile"`
@@ -31,7 +32,7 @@ func systemDiagnostics() SystemReport {
 	status := platformStatus()
 	report := SystemReport{
 		Time: time.Now().Format(time.RFC3339), Version: appVersion,
-		Platform: status.Platform, Installed: status.Installed, Active: status.Active,
+		Platform: status.Platform, Installed: status.Installed, Active: status.Active, EngineProcesses: status.EngineProcesses,
 		Services: status.Services, Profiles: status.Profiles,
 		YoutubeProfile: status.YoutubeProfile, AutoHostlist: status.AutoHostlist,
 		TelegramReady: status.TelegramReady, Conflicts: platformOtherFilters(),

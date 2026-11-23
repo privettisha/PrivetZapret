@@ -64,9 +64,10 @@ func platformRelaunchElevated() {
 		}
 		cmd := exec.Command(pkexec, append(args, append([]string{path}, os.Args[1:]...)...)...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if err := cmd.Run(); err == nil {
-			return
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "PrivetZapret: не удалось получить права через polkit:", err)
 		}
+		return
 	}
 	cmd := exec.Command("sudo", append([]string{path}, os.Args[1:]...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr

@@ -9,6 +9,9 @@ func TestMediaProbeDistinguishesSiteFromPlaybackHost(t *testing.T) {
 	if !usableProbe("youtube", youtubeMediaProbeURL, EndpointCheck{Reachable: true, HTTPCode: 200}) {
 		t.Fatal("healthy Google video response must count")
 	}
+	if !usableProbe("youtube", youtubeMediaProbeURL, EndpointCheck{Reachable: true, HTTPCode: 404}) {
+		t.Fatal("CDN root without a video token should still prove connectivity")
+	}
 	if !usableProbe("soundcloud", soundcloudMediaProbeURL, EndpointCheck{Reachable: true, HTTPCode: 403}) {
 		t.Fatal("expected CDN root response must count as reachable")
 	}

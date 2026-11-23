@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -12,8 +13,12 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
+
+//go:embed assets/icon.svg
+var iconSVG []byte
 
 func main() {
 	if platformHandleSpecialMode() {
@@ -28,6 +33,8 @@ func main() {
 
 func runDesktop() {
 	a := app.NewWithID("ru.privetdns.PrivetZapret")
+	a.SetIcon(fyne.NewStaticResource("icon.svg", iconSVG))
+	a.Settings().SetTheme(theme.LightTheme())
 	w := a.NewWindow("PrivetZapret")
 	w.Resize(fyne.NewSize(780, 650))
 	status := platformStatus()
@@ -112,9 +119,11 @@ func runDesktop() {
 	applyTelegramRoute := widget.NewButton("Применить маршрут Telegram", nil)
 	telegramOpen := widget.NewButton("Подключить в Telegram", nil)
 	telegramCopy := widget.NewButton("Скопировать параметры", nil)
-	report := widget.NewMultiLineEntry()
-	report.SetMinRowsVisible(16)
-	report.Disable()
+	report := widget.NewLabel("Нажмите «Проверить соединение».")
+	report.Wrapping = fyne.TextWrapWord
+	reportJSON := ""
+	copyReport := widget.NewButton("Скопировать отчёт", nil)
+	copyReport.Disable()
 	checkConnection := widget.NewButton("Проверить соединение", nil)
 	repair := widget.NewButton("Восстановить службу", nil)
 	checkUpdates := widget.NewButton("Проверить обновления", nil)
@@ -358,12 +367,39 @@ func runDesktop() {
 	}
 	checkConnection.OnTapped = func() {
 		act(func() error {
-			data, err := json.MarshalIndent(systemDiagnostics(), "", "  ")
+			result := systemDiagnostics()
+			data, err := json.MarshalIndent(result, "", "  ")
 			if err == nil {
-				fyne.Do(func() { report.SetText(string(data)) })
+				yesNo := func(value bool) string {
+					if value {
+						return "да"
+					}
+					return "нет"
+				}
+				endpoint := func(name string) string {
+					check := result.Endpoints[name]
+					if !check.Reachable {
+						return "нет соединения (" + check.Error + ")"
+					}
+					return fmt.Sprintf("отвечает, HTTP %d", check.HTTPCode)
+				}
+				human := fmt.Sprintf("Служба: %s\nПроцессы движка: %d\nYouTube: %s\nВидеосервер Googlevideo: %s\nTelegram-прокси: %s\nНедавние ошибки медиа Telegram: %d\nСистемный DNS: %s\nДругие фильтры: %s\nVPN: %s",
+					yesNo(result.Active), result.EngineProcesses, endpoint("youtube"), endpoint("video_server"), yesNo(result.TelegramReady), result.TelegramMediaErrors, yesNo(result.DNSActive), strings.Join(result.Conflicts, ", "), strings.Join(result.VPNInterfaces, ", "))
+				if result.Endpoints["youtube"].Reachable && !result.Endpoints["video_server"].Reachable {
+					human += "\n\nСайт YouTube отвечает, но пример видеосервера недоступен. Если соединение блокируется до TLS, переключение режима может не помочь."
+				}
+				fyne.Do(func() {
+					report.SetText(human)
+					reportJSON = string(data)
+					copyReport.Enable()
+				})
 			}
 			return err
 		})
+	}
+	copyReport.OnTapped = func() {
+		w.Clipboard().SetContent(reportJSON)
+		dialog.ShowInformation("Проверка", "Отчёт скопирован", w)
 	}
 	repair.OnTapped = func() { act(platformRepair) }
 	checkUpdates.OnTapped = func() {
@@ -399,7 +435,7 @@ func runDesktop() {
 	connectionTab := container.NewVScroll(container.NewVBox(
 		widget.NewCard("Состояние", "Служба и процессы", container.NewVBox(state, detail, primary, refresh)),
 		widget.NewCard("Режим соединения", "Режим влияет на число попыток и разделение пакетов", container.NewVBox(mode, applyMode)),
-		widget.NewCard("YouTube", "Если страница открывается, а видео нет, попробуйте «Без QUIC» и проверьте видеосервер", container.NewVBox(profile, applyProfile, autoYouTube)),
+		widget.NewCard("YouTube", "Если видео не идёт, проверьте видеосервер и смените профиль", container.NewVBox(profile, applyProfile, autoYouTube)),
 		widget.NewCard("Telegram", "Подключите локальный прокси в Telegram Desktop", container.NewVBox(telegramState, telegramOpen, telegramCopy, telegramRoute, applyTelegramRoute)),
 		remove,
 	))
@@ -413,7 +449,7 @@ func runDesktop() {
 	dnsTab := container.NewVScroll(container.NewVBox(widget.NewCard("Свой DNS", "DoH или DoT", container.NewVBox(
 		widget.NewLabel("Вставьте HTTPS ссылку DoH или tls://имя-сервера для DoT. При сбое запросы пойдут через прежние DNS без шифрования."), dnsInput, dnsEnable, dnsState, applyDNS,
 	))))
-	checkTab := container.NewBorder(container.NewVBox(checkConnection, repair, checkUpdates, installUpdate, rollback), nil, nil, nil, report)
+	checkTab := container.NewBorder(container.NewVBox(checkConnection, copyReport, repair, checkUpdates, installUpdate, rollback), nil, nil, nil, container.NewVScroll(report))
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Управление", connectionTab),
 		container.NewTabItem("Сервисы", servicesTab),

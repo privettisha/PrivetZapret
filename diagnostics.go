@@ -12,7 +12,11 @@ type EndpointCheck struct {
 	Error     string `json:"error,omitempty"`
 }
 
-const youtubeMediaProbeURL = "https://redirector.googlevideo.com/report_mapping"
+// A direct Googlevideo CDN host catches TCP connection failures hidden by the
+// always-reachable redirector/report_mapping endpoint. It is a sample host,
+// not a test of the exact CDN assigned to every video/account.
+const youtubeMediaProbeURL = "https://rr2---sn-ug5onuxaxjvh-v8cz.googlevideo.com/"
+const youtubeMappingProbeURL = "https://redirector.googlevideo.com/report_mapping"
 const soundcloudMediaProbeURL = "https://cf-media.sndcdn.com/"
 
 func connectivityCheck() map[string]EndpointCheck {
@@ -24,6 +28,7 @@ func connectivityCheck() map[string]EndpointCheck {
 		"youtube":                 "https://www.youtube.com/generate_204",
 		"preview":                 "https://i.ytimg.com/vi/jfKfPfyJRdk/default.jpg",
 		"video_server":            youtubeMediaProbeURL,
+		"video_mapping":           youtubeMappingProbeURL,
 		"soundcloud_media_server": soundcloudMediaProbeURL,
 	}
 	checks := make(map[string]EndpointCheck, len(targets))
