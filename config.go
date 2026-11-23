@@ -14,13 +14,14 @@ import (
 const (
 	appName     = "PrivetZapret"
 	serviceName = "PrivetZapret"
-	appVersion  = "0.7.3"
+	appVersion  = "0.7.4"
 	tgProxyPort = 14430
 )
 
 type Config struct {
 	Mode           string            `json:"mode"`
 	YoutubeProfile string            `json:"youtube_profile"`
+	TelegramRoute  string            `json:"telegram_route,omitempty"`
 	TelegramSecret string            `json:"telegram_secret"`
 	Services       []string          `json:"services"`
 	CustomDomains  []string          `json:"custom_domains,omitempty"`
@@ -36,8 +37,11 @@ type Config struct {
 type Status struct {
 	Installed         bool                `json:"installed"`
 	Active            bool                `json:"active"`
+	ServiceRunning    bool                `json:"service_running"`
+	EngineProcesses   int                 `json:"engine_processes"`
 	Mode              string              `json:"mode"`
 	YoutubeProfile    string              `json:"youtube_profile"`
+	TelegramRoute     string              `json:"telegram_route"`
 	Platform          string              `json:"platform"`
 	Message           string              `json:"message,omitempty"`
 	NeedsUpdate       bool                `json:"needs_update"`
@@ -83,6 +87,24 @@ func normalizeYoutubeProfile(profile string) string {
 	}
 }
 
+func normalizeTelegramRoute(route string) string {
+	switch route {
+	case "media", "direct", "cloudflare":
+		return route
+	default:
+		return "media"
+	}
+}
+
+func platformSetTelegramRoute(route string) error {
+	if normalizeTelegramRoute(route) != route {
+		return fmt.Errorf("неизвестный маршрут Telegram")
+	}
+	cfg := loadConfig(platformConfigPath())
+	cfg.TelegramRoute = route
+	return platformApplyConfig(cfg)
+}
+
 func loadConfig(path string) Config {
 	cfg := Config{Mode: "balanced", YoutubeProfile: "standard", AutoHostlist: true}
 	b, err := os.ReadFile(path)
@@ -91,6 +113,7 @@ func loadConfig(path string) Config {
 	}
 	cfg.Mode = normalizeMode(cfg.Mode)
 	cfg.YoutubeProfile = normalizeYoutubeProfile(cfg.YoutubeProfile)
+	cfg.TelegramRoute = normalizeTelegramRoute(cfg.TelegramRoute)
 	cfg.TelegramSecret = normalizeTelegramSecret(cfg.TelegramSecret)
 	cfg.CustomDomains = normalizeDomains(cfg.CustomDomains)
 	cfg.ExcludeDomains = normalizeDomains(cfg.ExcludeDomains)
@@ -212,6 +235,7 @@ func statusSettings(status Status, cfg Config) Status {
 	status.Profiles = cfg.Profiles
 	status.DNSURL = cfg.DNSURL
 	status.DNSEnabled = cfg.DNSEnabled
+	status.TelegramRoute = cfg.TelegramRoute
 	return status
 }
 
@@ -233,14 +257,25 @@ func telegramProxyURL(secret string) string {
 }
 
 func telegramProxyArgs(logDir string) []string {
-	return []string{
+	return telegramProxyArgsConfig(logDir, "media")
+}
+
+func telegramProxyArgsConfig(logDir, route string) []string {
+	args := []string{
 		"--host", "127.0.0.1", "--port", fmt.Sprint(tgProxyPort),
-		// The upstream default redirects both DC2 and DC4 to one IP. Its media
-		// guide recommends leaving only DC4 for non-Premium photo/video traffic.
-		"--dc-ip", "4:149.154.167.220",
 		"--log-file", filepath.Join(logDir, "telegram.log"),
 		"--log-max-mb", "3", "--log-backups", "1",
 	}
+	switch normalizeTelegramRoute(route) {
+	case "direct":
+		args = append(args, "--dc-ip", "2:149.154.167.220", "--dc-ip", "4:149.154.167.220")
+	case "cloudflare":
+		args = append(args, "--dc-ip", "--pool-size", "0")
+	default:
+		// Upstream recommends only DC4 direct for non-Premium media.
+		args = append(args, "--dc-ip", "4:149.154.167.220")
+	}
+	return args
 }
 
 func telegramProxyReady() bool {

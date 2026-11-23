@@ -3,12 +3,14 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	userpkg "os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -50,6 +52,22 @@ func platformRelaunchElevated() {
 		fmt.Fprintln(os.Stderr, err)
 		return
 	}
+	if pkexec, err := exec.LookPath("pkexec"); err == nil && os.Getenv("DISPLAY") != "" {
+		args := []string{"/usr/bin/env"}
+		for _, key := range []string{"DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+			if value := os.Getenv(key); value != "" {
+				args = append(args, key+"="+value)
+			}
+		}
+		if current, err := userpkg.Current(); err == nil {
+			args = append(args, "SUDO_USER="+current.Username, "SUDO_UID="+current.Uid)
+		}
+		cmd := exec.Command(pkexec, append(args, append([]string{path}, os.Args[1:]...)...)...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err == nil {
+			return
+		}
+	}
 	cmd := exec.Command("sudo", append([]string{path}, os.Args[1:]...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	_ = cmd.Run()
@@ -62,10 +80,14 @@ func platformInstalledBinary() string { return filepath.Join(linuxInstallDir, ap
 
 func platformStatus() Status {
 	_, statErr := os.Stat(linuxUnitPath)
-	active := exec.Command("systemctl", "is-active", "--quiet", "privetzapret.service").Run() == nil
+	serviceRunning := exec.Command("systemctl", "is-active", "--quiet", "privetzapret.service").Run() == nil
+	pids, _ := linuxEnginePIDs()
+	active := serviceRunning || len(pids) > 0
 	installed := statErr == nil
 	cfg := loadConfig(linuxConfigPath())
-	status := statusSettings(Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
+	status := statusSettings(Status{Installed: installed, Active: active, ServiceRunning: serviceRunning, EngineProcesses: len(pids), Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
+	status.DNSSupported = true
+	status.DNSActive = active && cfg.DNSEnabled && linuxDNSApplied()
 	_, err := os.Stat(rollbackPath())
 	status.RollbackAvailable = err == nil
 	return status
@@ -134,6 +156,7 @@ ExecStart=/opt/privetzapret/PrivetZapret --daemon
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=8
+KillMode=control-group
 
 [Install]
 WantedBy=multi-user.target
@@ -144,18 +167,30 @@ WantedBy=multi-user.target
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemd: %s", strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.Command("systemctl", "enable", "--now", "privetzapret.service").CombinedOutput(); err != nil {
+	if out, err := exec.Command("systemctl", "start", "privetzapret.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("запуск: %s", strings.TrimSpace(string(out)))
 	}
-	return nil
+	return verifyLinuxStarted()
 }
 
 func platformStart() error {
-	out, err := exec.Command("systemctl", "enable", "--now", "privetzapret.service").CombinedOutput()
+	out, err := exec.Command("systemctl", "start", "privetzapret.service").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("запуск: %s", strings.TrimSpace(string(out)))
 	}
-	return nil
+	return verifyLinuxStarted()
+}
+
+func verifyLinuxStarted() error {
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		status := platformStatus()
+		if status.ServiceRunning && status.EngineProcesses > 0 && (!hasService(status.Services, "telegram") || status.TelegramReady) && (!status.DNSEnabled || status.DNSActive) {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return errors.New("движок не запустился; откройте «Проверка» и журнал службы")
 }
 
 func platformStop() error {
@@ -164,18 +199,19 @@ func platformStop() error {
 	// Clean up only PrivetZapret's own resources even if systemd reports failure.
 	orphanErr := stopLinuxEngines()
 	_ = deleteNftTable()
+	dnsErr := restoreLinuxDNS()
 	if err != nil {
-		return errors.Join(fmt.Errorf("остановка: %s", strings.TrimSpace(string(out))), orphanErr)
+		return errors.Join(fmt.Errorf("остановка: %s", strings.TrimSpace(string(out))), orphanErr, dnsErr)
 	}
-	return orphanErr
+	return errors.Join(orphanErr, dnsErr)
 }
 
-func stopLinuxEngines() error {
+func linuxEnginePIDs() ([]int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var stopErr error
+	var pids []int
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -192,17 +228,42 @@ func stopLinuxEngines() error {
 		if exe != filepath.Join(linuxInstallDir, "nfqws2") && exe != filepath.Join(linuxInstallDir, "PrivetTgWs") {
 			continue
 		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
+
+func stopLinuxEngines() error {
+	pids, err := linuxEnginePIDs()
+	if err != nil {
+		return err
+	}
+	var stopErr error
+	for _, pid := range pids {
 		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			stopErr = errors.Join(stopErr, fmt.Errorf("остановка движка %d: %w", pid, err))
 		}
 	}
-	return stopErr
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		remaining, err := linuxEnginePIDs()
+		if err != nil {
+			return errors.Join(stopErr, err)
+		}
+		if len(remaining) == 0 {
+			return stopErr
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.Join(stopErr, errors.New("движки не завершились после остановки"))
 }
 
 func platformSetMode(mode string) error {
 	wasActive := platformStatus().Active
 	if wasActive {
-		_ = platformStop()
+		if err := platformStop(); err != nil {
+			return err
+		}
 	}
 	if err := saveConfig(linuxConfigPath(), mode); err != nil {
 		return err
@@ -260,8 +321,45 @@ func platformConfigPath() string { return linuxConfigPath() }
 
 func platformProtectConfig(_ string) error { return nil }
 
-func platformSetDNS(_ string, _ bool) error {
-	return errors.New("системный DoH пока доступен только в версии для Windows")
+func platformSetDNS(rawURL string, enabled bool) error {
+	cfg := loadConfig(linuxConfigPath())
+	if rawURL == "" && !enabled {
+		cfg.DNSURL = ""
+	} else if rawURL != "" {
+		endpoint, err := validateDNSEndpoint(rawURL)
+		if err != nil {
+			return err
+		}
+		cfg.DNSURL = endpoint
+	}
+	if enabled {
+		if cfg.DNSURL == "" {
+			return errors.New("вставьте адрес DoH или DoT")
+		}
+		if !platformStatus().Active {
+			return errors.New("сначала запустите PrivetZapret")
+		}
+		state, err := readLinuxDNSState()
+		if errors.Is(err, os.ErrNotExist) {
+			state, err = snapshotLinuxDNS(linuxResolvPath)
+		}
+		if err != nil {
+			return err
+		}
+		proxy, err := newDNSProxy(cfg.DNSURL, state.Original)
+		if err != nil {
+			return err
+		}
+		defer proxy.Close()
+		query := []byte{0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0, 0, 1, 0, 1}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := proxy.secure(ctx, query); err != nil {
+			return fmt.Errorf("DNS-сервер не ответил: %w", err)
+		}
+	}
+	cfg.DNSEnabled = enabled
+	return platformApplyConfig(cfg)
 }
 
 func platformApplyConfig(cfg Config) error {
@@ -374,7 +472,7 @@ func runLinuxDaemon() error {
 	var tgCmd *exec.Cmd
 	var tgDone chan error
 	if hasService(cfg.Services, "telegram") {
-		tgCmd = exec.Command(filepath.Join(linuxInstallDir, "PrivetTgWs"), telegramProxyArgs(linuxInstallDir)...)
+		tgCmd = exec.Command(filepath.Join(linuxInstallDir, "PrivetTgWs"), telegramProxyArgsConfig(linuxInstallDir, cfg.TelegramRoute)...)
 		tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
 		tgCmd.Stdout, tgCmd.Stderr = os.Stdout, os.Stderr
 		if err := tgCmd.Start(); err != nil {
@@ -386,6 +484,8 @@ func runLinuxDaemon() error {
 		go func() { tgDone <- tgCmd.Wait() }()
 	}
 
+	leaseTicker := time.NewTicker(3 * time.Second)
+	defer leaseTicker.Stop()
 	select {
 	case err := <-done:
 		if tgCmd != nil {
@@ -416,37 +516,69 @@ func runLinuxDaemon() error {
 		if tgCmd != nil {
 			_ = tgCmd.Process.Kill()
 		}
+		_ = stopLinuxEngines()
 		_ = deleteNftTable()
 	}()
+	if cfg.DNSEnabled {
+		state, err := readLinuxDNSState()
+		if errors.Is(err, os.ErrNotExist) {
+			state, err = snapshotLinuxDNS(linuxResolvPath)
+		}
+		if err != nil {
+			return err
+		}
+		proxy, err := newDNSProxy(cfg.DNSURL, state.Original)
+		if err != nil {
+			return err
+		}
+		if err := proxy.listen(false); err != nil {
+			proxy.Close()
+			return err
+		}
+		defer func() {
+			_ = restoreLinuxDNS()
+			proxy.Close()
+		}()
+		if err := applyLinuxDNS(state); err != nil {
+			return err
+		}
+	}
 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	select {
-	case err := <-done:
-		return err
-	case err := <-tgDone:
-		return fmt.Errorf("telegram proxy завершился: %w", err)
-	case <-sig:
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		if tgCmd != nil {
-			_ = tgCmd.Process.Signal(syscall.SIGTERM)
-		}
-		deadline := time.After(3 * time.Second)
-		for done != nil || tgDone != nil {
-			select {
-			case <-done:
-				done = nil
-			case <-tgDone:
-				tgDone = nil
-			case <-deadline:
-				_ = cmd.Process.Kill()
-				if tgCmd != nil {
-					_ = tgCmd.Process.Kill()
-				}
+	defer signal.Stop(sig)
+	for {
+		select {
+		case err := <-done:
+			return err
+		case err := <-tgDone:
+			return fmt.Errorf("telegram proxy завершился: %w", err)
+		case <-leaseTicker.C:
+			if !controlLeaseAlive() {
 				return nil
 			}
+		case <-sig:
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			if tgCmd != nil {
+				_ = tgCmd.Process.Signal(syscall.SIGTERM)
+			}
+			deadline := time.After(3 * time.Second)
+			for done != nil || tgDone != nil {
+				select {
+				case <-done:
+					done = nil
+				case <-tgDone:
+					tgDone = nil
+				case <-deadline:
+					_ = cmd.Process.Kill()
+					if tgCmd != nil {
+						_ = tgCmd.Process.Kill()
+					}
+					return nil
+				}
+			}
+			return nil
 		}
-		return nil
 	}
 }
 
@@ -488,9 +620,17 @@ func deleteNftTable() error {
 
 func platformOpenBrowser(url string) {
 	user := os.Getenv("SUDO_USER")
+	if user == "" && os.Getenv("PKEXEC_UID") != "" {
+		if account, err := userpkg.LookupId(os.Getenv("PKEXEC_UID")); err == nil {
+			user = account.Username
+		}
+	}
 	if user != "" && user != "root" {
 		cmd := exec.Command("sudo", "-u", user, "xdg-open", url)
 		cmd.Env = os.Environ()
+		if account, err := userpkg.Lookup(user); err == nil {
+			cmd.Env = append(cmd.Env, "HOME="+account.HomeDir, "USER="+user, "LOGNAME="+user)
+		}
 		_ = cmd.Start()
 		return
 	}

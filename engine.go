@@ -90,10 +90,10 @@ func strategyArgsConfig(dir string, cfg Config) []string {
 		quicDesync := fmt.Sprintf("fake:blob=quic_google:repeats=%d", repeats)
 		switch profile {
 		case "split":
-			youtubeFake = "fake:blob=fake_default_tls:tcp_md5:repeats=6:tls_mod=rnd,dupsid,sni=www.google.com"
+			youtubeFake = fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats)
 			youtubeSplit = "multisplit:pos=1,midsld"
 		case "alternative", "tcp":
-			youtubeFake = "fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=6"
+			youtubeFake = fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=%d", repeats)
 			youtubeSplit = "multidisorder:pos=midsld"
 			if profile == "tcp" {
 				// Only YouTube QUIC is dropped; browsers retry the same host over TCP.
@@ -220,11 +220,11 @@ func profileStrategy(profile string, repeats int, split string) (string, string,
 	quic := fmt.Sprintf("fake:blob=quic_google:repeats=%d", repeats)
 	switch profile {
 	case "split":
-		return "fake:blob=fake_default_tls:tcp_md5:repeats=6", "multisplit:pos=1,midsld", quic
+		return fake, "multisplit:pos=1,midsld", quic
 	case "alternative":
-		return "fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=6", "multidisorder:pos=midsld", quic
+		return fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=%d", repeats), "multidisorder:pos=midsld", quic
 	case "tcp":
-		return "fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=6", "multidisorder:pos=midsld", "drop"
+		return fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=%d", repeats), "multidisorder:pos=midsld", "drop"
 	default:
 		return fake, split, quic
 	}

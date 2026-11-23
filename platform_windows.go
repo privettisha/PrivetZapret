@@ -29,7 +29,7 @@ var windowsFiles = []string{"winws2.exe", "WinDivert.dll", "WinDivert64.sys", "c
 // Keep engine assets in a versioned directory. An already loaded WinDivert
 // driver may legitimately lock an older .sys file after winws2 has exited.
 // A new release must never depend on overwriting that file in place.
-const windowsEngineRevision = "engine-zapret2-1.0.7-r1"
+const windowsEngineRevision = "engine-zapret2-1.0.7-tgws-1.12.0"
 
 func windowsInstallDir() string {
 	base := os.Getenv("ProgramData")
@@ -95,11 +95,13 @@ func platformStatus() Status {
 			s.Close()
 		}
 	}
-	if orphan, _ := windowsEngines(false); orphan {
+	serviceRunning := active
+	engineProcesses, _ := windowsEngines(false)
+	if engineProcesses > 0 {
 		active = true
 	}
 	cfg := loadConfig(windowsConfigPath())
-	status := statusSettings(Status{Installed: installed, Active: active, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
+	status := statusSettings(Status{Installed: installed, Active: active, ServiceRunning: serviceRunning, EngineProcesses: engineProcesses, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
 	status.DNSSupported = true
 	status.DNSActive = active && cfg.DNSEnabled && windowsDNSApplied()
 	_, err = os.Stat(rollbackPath())
@@ -165,22 +167,25 @@ func platformInstall(mode string) error {
 		s, err = m.CreateService(serviceName, dst, mgr.Config{
 			DisplayName: "PrivetZapret",
 			Description: "Selected service connectivity",
-			StartType:   mgr.StartAutomatic,
+			StartType:   mgr.StartManual,
 		}, "--service")
 		if err != nil {
 			return fmt.Errorf("создание службы: %w", err)
 		}
 	}
 	defer s.Close()
-	if err := setWindowsServiceStartup(s, mgr.StartAutomatic); err != nil {
-		return fmt.Errorf("включение автозапуска службы: %w", err)
+	if err := setWindowsServiceStartup(s, mgr.StartManual); err != nil {
+		return fmt.Errorf("настройка ручного запуска службы: %w", err)
 	}
 	_ = s.SetRecoveryActions([]mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 2 * time.Second}}, 86400)
 	_ = s.SetRecoveryActionsOnNonCrashFailures(true)
 	if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
 		return fmt.Errorf("запуск службы: %w", err)
 	}
-	return waitWindowsState(s, svc.Running, 8*time.Second)
+	if err := waitWindowsState(s, svc.Running, 8*time.Second); err != nil {
+		return err
+	}
+	return verifyWindowsStarted()
 }
 
 func platformStart() error {
@@ -194,13 +199,28 @@ func platformStart() error {
 		return errors.New("сначала установите PrivetZapret")
 	}
 	defer s.Close()
-	if err := setWindowsServiceStartup(s, mgr.StartAutomatic); err != nil {
+	if err := setWindowsServiceStartup(s, mgr.StartManual); err != nil {
 		return fmt.Errorf("включение службы: %w", err)
 	}
 	if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
 		return err
 	}
-	return waitWindowsState(s, svc.Running, 8*time.Second)
+	if err := waitWindowsState(s, svc.Running, 8*time.Second); err != nil {
+		return err
+	}
+	return verifyWindowsStarted()
+}
+
+func verifyWindowsStarted() error {
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		status := platformStatus()
+		if status.ServiceRunning && status.EngineProcesses > 0 && (!hasService(status.Services, "telegram") || status.TelegramReady) && (!status.DNSEnabled || status.DNSActive) {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return errors.New("движок не запустился; откройте «Проверка» и журнал службы")
 }
 
 func platformStop() error {
@@ -248,8 +268,10 @@ func setWindowsServiceStartup(s *mgr.Service, startType uint32) error {
 
 func platformSetDNS(rawURL string, enabled bool) error {
 	cfg := loadConfig(windowsConfigPath())
-	if rawURL != "" {
-		url, err := validateDoHURL(rawURL)
+	if rawURL == "" && !enabled {
+		cfg.DNSURL = ""
+	} else if rawURL != "" {
+		url, err := validateDNSEndpoint(rawURL)
 		if err != nil {
 			return err
 		}
@@ -262,7 +284,7 @@ func platformSetDNS(rawURL string, enabled bool) error {
 	}
 	if enabled {
 		if cfg.DNSURL == "" {
-			return errors.New("вставьте ссылку DoH")
+			return errors.New("вставьте адрес DoH или DoT")
 		}
 		status := platformStatus()
 		if status.NeedsUpdate {
@@ -286,8 +308,8 @@ func platformSetDNS(rawURL string, enabled bool) error {
 		query := []byte{0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0, 0, 1, 0, 1}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if _, err := proxy.doh(ctx, query); err != nil {
-			return fmt.Errorf("DoH-сервер не ответил: %w", err)
+		if _, err := proxy.secure(ctx, query); err != nil {
+			return fmt.Errorf("DNS-сервер не ответил: %w", err)
 		}
 	}
 	cfg.DNSEnabled = enabled
@@ -297,7 +319,9 @@ func platformSetDNS(rawURL string, enabled bool) error {
 func platformSetMode(mode string) error {
 	wasActive := platformStatus().Active
 	if wasActive {
-		_ = platformStop()
+		if err := platformStop(); err != nil {
+			return err
+		}
 	}
 	if err := saveConfig(windowsConfigPath(), mode); err != nil {
 		return err
@@ -429,23 +453,35 @@ func platformRemove() error {
 }
 
 func stopWindowsEngines() error {
-	_, err := windowsEngines(true)
-	return err
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err := windowsEngines(true); err != nil {
+			return err
+		}
+		time.Sleep(150 * time.Millisecond)
+		remaining, err := windowsEngines(false)
+		if err != nil {
+			return err
+		}
+		if remaining == 0 {
+			return nil
+		}
+	}
+	return errors.New("процессы движка остались после остановки")
 }
 
-func windowsEngines(terminate bool) (bool, error) {
+func windowsEngines(terminate bool) (int, error) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer windows.CloseHandle(snapshot)
 	var entry windows.ProcessEntry32
 	entry.Size = uint32(unsafe.Sizeof(entry))
 	if err := windows.Process32First(snapshot, &entry); err != nil {
-		return false, err
+		return 0, err
 	}
 	installDir := strings.ToLower(filepath.Clean(windowsInstallDir())) + `\`
-	found := false
+	found := 0
 	for {
 		name := strings.ToLower(windows.UTF16ToString(entry.ExeFile[:]))
 		if name == "winws2.exe" || name == "privettgws.exe" {
@@ -459,7 +495,7 @@ func windowsEngines(terminate bool) (bool, error) {
 				size := uint32(len(path))
 				if queryErr := windows.QueryFullProcessImageName(process, 0, &path[0], &size); queryErr == nil &&
 					strings.HasPrefix(strings.ToLower(filepath.Clean(windows.UTF16ToString(path[:size]))), installDir) {
-					found = true
+					found++
 					if terminate {
 						if killErr := windows.TerminateProcess(process, 0); killErr != nil {
 							windows.CloseHandle(process)
@@ -494,6 +530,7 @@ type zapretService struct{}
 
 func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	changes <- svc.Status{State: svc.StartPending}
+	defer func() { _ = stopWindowsEngines() }()
 	dir := windowsInstallDir()
 	engineDir := windowsEngineDir()
 	cfg := loadConfig(windowsConfigPath())
@@ -529,7 +566,7 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	var tgCmd *exec.Cmd
 	var tgDone chan error
 	if hasService(cfg.Services, "telegram") {
-		tgCmd = exec.Command(filepath.Join(engineDir, "PrivetTgWs.exe"), telegramProxyArgs(dir)...)
+		tgCmd = exec.Command(filepath.Join(engineDir, "PrivetTgWs.exe"), telegramProxyArgsConfig(dir, cfg.TelegramRoute)...)
 		tgCmd.Dir = engineDir
 		tgCmd.Env = append(os.Environ(), "PRIVET_TG_SECRET="+cfg.TelegramSecret)
 		tgCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -618,6 +655,8 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 	}
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	go autoUpdateLoop()
+	leaseTicker := time.NewTicker(3 * time.Second)
+	defer leaseTicker.Stop()
 	for {
 		select {
 		case <-zapDone:
@@ -634,6 +673,17 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 			stopDNS()
 			changes <- svc.Status{State: svc.Stopped}
 			return false, 3
+		case <-leaseTicker.C:
+			if !controlLeaseAlive() {
+				changes <- svc.Status{State: svc.StopPending}
+				_ = zapCmd.Process.Kill()
+				if tgCmd != nil {
+					_ = tgCmd.Process.Kill()
+				}
+				stopDNS()
+				changes <- svc.Status{State: svc.Stopped}
+				return false, 0
+			}
 		case c := <-requests:
 			switch c.Cmd {
 			case svc.Interrogate:

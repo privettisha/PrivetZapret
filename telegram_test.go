@@ -38,3 +38,14 @@ func TestTelegramFallbackDomainsReachZapretHostlist(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramRoutesUseDifferentUpstreamPaths(t *testing.T) {
+	direct := strings.Join(telegramProxyArgsConfig(t.TempDir(), "direct"), " ")
+	cloudflare := strings.Join(telegramProxyArgsConfig(t.TempDir(), "cloudflare"), " ")
+	if !strings.Contains(direct, "--dc-ip 2:149.154.167.220") || !strings.Contains(direct, "--dc-ip 4:149.154.167.220") {
+		t.Fatalf("direct route does not include both DCs: %s", direct)
+	}
+	if !strings.Contains(cloudflare, "--dc-ip --pool-size 0") {
+		t.Fatalf("fallback route still creates a direct pool: %s", cloudflare)
+	}
+}

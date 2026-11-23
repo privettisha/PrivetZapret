@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -39,6 +40,38 @@ func validateDoHURL(raw string) (string, error) {
 	return u.String(), nil
 }
 
+// DoT has no URL path or private token. The TLS hostname is used for SNI and
+// certificate validation; bootstrap addresses come from the saved adapter DNS.
+func validateDoTURL(raw string) (string, error) {
+	if raw == "" || len(raw) > 2048 || raw != strings.TrimSpace(raw) || strings.ContainsAny(raw, "\r\n\t ") {
+		return "", errors.New("вставьте адрес DoT в виде tls://dns.example.com")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u == nil || u.Scheme != "tls" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.Path != "" || u.Opaque != "" {
+		return "", errors.New("нужен адрес DoT в виде tls://dns.example.com")
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil && (ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast()) {
+		return "", errors.New("локальный адрес не подходит для DoT")
+	}
+	if strings.EqualFold(u.Hostname(), "localhost") {
+		return "", errors.New("локальный адрес не подходит для DoT")
+	}
+	if u.Port() != "" {
+		port, err := net.LookupPort("tcp", u.Port())
+		if err != nil || port < 1 {
+			return "", errors.New("неверный порт DoT")
+		}
+	}
+	return u.String(), nil
+}
+
+func validateDNSEndpoint(raw string) (string, error) {
+	if strings.HasPrefix(raw, "tls://") {
+		return validateDoTURL(raw)
+	}
+	return validateDoHURL(raw)
+}
+
 func validDNSMessage(query, response []byte) bool {
 	return len(query) >= 12 && len(response) >= 12 &&
 		bytes.Equal(query[:2], response[:2]) && response[2]&0x80 != 0 &&
@@ -47,6 +80,8 @@ func validDNSMessage(query, response []byte) bool {
 
 type dnsProxy struct {
 	url      string
+	dotHost  string
+	dotPort  string
 	fallback []string
 	client   *http.Client
 	udp      []net.PacketConn
@@ -55,7 +90,7 @@ type dnsProxy struct {
 }
 
 func newDNSProxy(rawURL string, original []string) (*dnsProxy, error) {
-	endpoint, err := validateDoHURL(rawURL)
+	endpoint, err := validateDNSEndpoint(rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -70,6 +105,13 @@ func newDNSProxy(rawURL string, original []string) (*dnsProxy, error) {
 		return nil, errors.New("у подключения нет исходных DNS-серверов для резервного режима")
 	}
 	proxy := &dnsProxy{url: endpoint, fallback: servers, slots: make(chan struct{}, 128)}
+	if strings.HasPrefix(endpoint, "tls://") {
+		u, _ := url.Parse(endpoint)
+		proxy.dotHost, proxy.dotPort = u.Hostname(), u.Port()
+		if proxy.dotPort == "" {
+			proxy.dotPort = "853"
+		}
+	}
 	transport := &http.Transport{
 		TLSHandshakeTimeout: 3 * time.Second,
 		IdleConnTimeout:     30 * time.Second,
@@ -101,6 +143,69 @@ func newDNSProxy(rawURL string, original []string) (*dnsProxy, error) {
 	}
 	proxy.client = &http.Client{Transport: transport, Timeout: 4 * time.Second}
 	return proxy, nil
+}
+
+func (p *dnsProxy) dot(ctx context.Context, query []byte) ([]byte, error) {
+	var addresses []string
+	if net.ParseIP(p.dotHost) != nil {
+		addresses = []string{p.dotHost}
+	} else {
+		for _, server := range p.fallback {
+			resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 1500 * time.Millisecond}).DialContext(ctx, network, server)
+			}}
+			ips, err := resolver.LookupIPAddr(ctx, p.dotHost)
+			if err != nil {
+				continue
+			}
+			for _, ip := range ips {
+				addresses = append(addresses, ip.IP.String())
+			}
+			if len(addresses) > 0 {
+				break
+			}
+		}
+	}
+	if len(addresses) == 0 {
+		return nil, errors.New("не удалось найти DoT-сервер")
+	}
+	for _, address := range addresses {
+		raw, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(address, p.dotPort))
+		if err != nil {
+			continue
+		}
+		conn := tls.Client(raw, &tls.Config{ServerName: p.dotHost, MinVersion: tls.VersionTLS12})
+		deadline := time.Now().Add(4 * time.Second)
+		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+			deadline = contextDeadline
+		}
+		_ = conn.SetDeadline(deadline)
+		if err = conn.HandshakeContext(ctx); err == nil {
+			var size [2]byte
+			binary.BigEndian.PutUint16(size[:], uint16(len(query)))
+			_, err = conn.Write(append(size[:], query...))
+			if err == nil {
+				_, err = io.ReadFull(conn, size[:])
+			}
+			if err == nil {
+				answer := make([]byte, int(binary.BigEndian.Uint16(size[:])))
+				_, err = io.ReadFull(conn, answer)
+				if err == nil && validDNSMessage(query, answer) {
+					_ = conn.Close()
+					return answer, nil
+				}
+			}
+		}
+		_ = conn.Close()
+	}
+	return nil, errors.New("DoT-сервер не ответил или сертификат не прошёл проверку")
+}
+
+func (p *dnsProxy) secure(ctx context.Context, query []byte) ([]byte, error) {
+	if p.dotHost != "" {
+		return p.dot(ctx, query)
+	}
+	return p.doh(ctx, query)
 }
 
 func (p *dnsProxy) doh(ctx context.Context, query []byte) ([]byte, error) {
@@ -189,7 +294,7 @@ func (p *dnsProxy) resolve(query []byte) []byte {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	answer, err := p.doh(ctx, query)
+	answer, err := p.secure(ctx, query)
 	cancel()
 	if err == nil {
 		return answer
