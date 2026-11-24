@@ -25,11 +25,12 @@ import (
 var windowsPayload embed.FS
 
 var windowsFiles = []string{"winws2.exe", "WinDivert.dll", "WinDivert64.sys", "cygwin1.dll", "PrivetTgWs.exe"}
+var windowsClassicFiles = []string{"winws.exe", "WinDivert.dll", "WinDivert64.sys", "cygwin1.dll"}
 
 // Keep engine assets in a versioned directory. An already loaded WinDivert
-// driver may legitimately lock an older .sys file after winws2 has exited.
+// driver may legitimately lock an older .sys file after winws has exited.
 // A new release must never depend on overwriting that file in place.
-const windowsEngineRevision = "engine-zapret2-1.0.7-tgws-1.12.0"
+const windowsEngineRevision = "engine-zapret1-72.9-zapret2-1.0.7-tgws-1.12.0"
 
 func windowsInstallDir() string {
 	base := os.Getenv("ProgramData")
@@ -41,7 +42,8 @@ func windowsInstallDir() string {
 
 func windowsConfigPath() string { return filepath.Join(windowsInstallDir(), "config.json") }
 
-func windowsEngineDir() string { return filepath.Join(windowsInstallDir(), windowsEngineRevision) }
+func windowsEngineDir() string  { return filepath.Join(windowsInstallDir(), windowsEngineRevision) }
+func windowsClassicDir() string { return filepath.Join(windowsEngineDir(), "classic") }
 
 func windowsVersionPath() string      { return filepath.Join(windowsInstallDir(), "version.txt") }
 func platformInstalledBinary() string { return filepath.Join(windowsInstallDir(), appName+".exe") }
@@ -112,6 +114,7 @@ func platformStatus() Status {
 
 func platformInstall(mode string) error {
 	status := platformStatus()
+	previousVersion := status.InstalledVersion
 	if status.Installed || status.Active {
 		if err := platformStop(); err != nil {
 			return fmt.Errorf("не удалось остановить предыдущую версию: %w", err)
@@ -137,6 +140,22 @@ func platformInstall(mode string) error {
 			return fmt.Errorf("подготовка %s: %w", name, err)
 		}
 	}
+	if err := os.MkdirAll(windowsClassicDir(), 0755); err != nil {
+		return err
+	}
+	for _, name := range windowsClassicFiles {
+		source := "payload/windows/" + name
+		if name == "winws.exe" || name == "WinDivert.dll" {
+			source = "payload/windows/classic/" + name
+		}
+		b, err := windowsPayload.ReadFile(source)
+		if err != nil {
+			return err
+		}
+		if err := writeFileIfChanged(filepath.Join(windowsClassicDir(), name), b, 0644); err != nil {
+			return fmt.Errorf("подготовка %s: %w", name, err)
+		}
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -151,7 +170,13 @@ func platformInstall(mode string) error {
 			return err
 		}
 	}
-	if err := saveConfig(windowsConfigPath(), mode); err != nil {
+	if previousVersion != "" && previousVersion != appVersion {
+		cfg := loadConfig(windowsConfigPath())
+		cfg.Mode, cfg.YoutubeProfile = "balanced", "standard"
+		if err := saveConfigValue(windowsConfigPath(), cfg); err != nil {
+			return err
+		}
+	} else if err := saveConfig(windowsConfigPath(), mode); err != nil {
 		return err
 	}
 	if err := writeFileIfChanged(windowsVersionPath(), []byte(appVersion+"\n"), 0644); err != nil {
@@ -248,7 +273,7 @@ func platformStop() error {
 	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		stopErr = err
 	}
-	// A crashed service can leave winws2 or the Telegram proxy running on its
+	// A crashed service can leave winws, winws2 or the Telegram proxy running on its
 	// own. Only terminate executables inside this application's install dir.
 	engineErr := stopWindowsEngines()
 	dnsErr := restoreWindowsDNS()
@@ -485,7 +510,7 @@ func windowsEngines(terminate bool) (int, error) {
 	found := 0
 	for {
 		name := strings.ToLower(windows.UTF16ToString(entry.ExeFile[:]))
-		if name == "winws2.exe" || name == "privettgws.exe" {
+		if name == "winws.exe" || name == "winws2.exe" || name == "privettgws.exe" {
 			access := uint32(windows.PROCESS_QUERY_LIMITED_INFORMATION)
 			if terminate {
 				access |= windows.PROCESS_TERMINATE | windows.SYNCHRONIZE
@@ -560,9 +585,15 @@ func (z *zapretService) Execute(_ []string, requests <-chan svc.ChangeRequest, c
 		args = append(args, "--wf-raw-part=@"+filepath.Join(engineDir, "windivert_part.tls_reply_in.txt"))
 		args = append(args, "--wf-raw-part=@"+filepath.Join(engineDir, "windivert_part.quic_initial_in.txt"))
 	}
-	args = append(args, strategyArgsConfig(engineDir, cfg)...)
-	zapCmd := exec.Command(filepath.Join(engineDir, "winws2.exe"), args...)
-	zapCmd.Dir = engineDir
+	enginePath, engineWorkDir := filepath.Join(engineDir, "winws2.exe"), engineDir
+	if hasService(cfg.Services, "youtube") && normalizeYoutubeProfile(cfg.YoutubeProfile) == "standard" {
+		args = provenWindowsStrategyArgs(engineDir, cfg)
+		enginePath, engineWorkDir = filepath.Join(windowsClassicDir(), "winws.exe"), windowsClassicDir()
+	} else {
+		args = append(args, strategyArgsConfig(engineDir, cfg)...)
+	}
+	zapCmd := exec.Command(enginePath, args...)
+	zapCmd.Dir = engineWorkDir
 	zapCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	var tgCmd *exec.Cmd
 	var tgDone chan error

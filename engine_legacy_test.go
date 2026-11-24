@@ -46,3 +46,22 @@ func TestProvenLinuxStrategyAcceptedByWorkingEngine(t *testing.T) {
 		t.Fatalf("working hostlist does not cover Googlevideo: %v", err)
 	}
 }
+
+func TestProvenWindowsStrategyUsesWorkingProfileWithoutLinuxMark(t *testing.T) {
+	cfg := Config{Mode: "balanced", Services: defaultServices(), YoutubeProfile: "standard"}
+	args := provenWindowsStrategyArgs(`C:\ProgramData\PrivetZapret\engine`, cfg)
+	joined := strings.Join(args, " ")
+	for _, expected := range []string{
+		"--wf-tcp=443,2053,2083,2087,2096,8443",
+		"--wf-udp=443,19294-19344,50000-50100",
+		"--dpi-desync=fake --dpi-desync-repeats=6",
+		"--ip-id=zero --dpi-desync=hostfakesplit --dpi-desync-repeats=4 --dpi-desync-fooling=ts --dpi-desync-hostfakesplit-mod=host=www.google.com",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("Windows profile lost %q", expected)
+		}
+	}
+	if strings.Contains(joined, "--dpi-desync-fwmark") {
+		t.Fatal("Windows profile contains Linux NFQUEUE mark")
+	}
+}

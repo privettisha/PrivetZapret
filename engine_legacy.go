@@ -59,3 +59,19 @@ func provenLinuxStrategyArgs(dir string, cfg Config) []string {
 	)
 	return args
 }
+
+// winws and nfqws share the zapret1 filtering/desync options. Windows only
+// replaces the packet capture setup; the YouTube payload and strategy stay
+// aligned with the profile that worked on Arch.
+func provenWindowsStrategyArgs(dir string, cfg Config) []string {
+	udpPorts := "443,19294-19344,50000-50100"
+	if cfg.GameMode && hasGameService(cfg.Services) {
+		udpPorts += ",3074,3478-3480,3659"
+	}
+	args := []string{
+		"--wf-tcp=443,2053,2083,2087,2096,8443",
+		"--wf-udp=" + udpPorts,
+	}
+	// The NFQUEUE mark is Linux-specific and must not be sent to winws.
+	return append(args, provenLinuxStrategyArgs(dir, cfg)[1:]...)
+}

@@ -21,6 +21,7 @@ var commonFiles = []string{
 	"ZAPRET2-LICENSE.txt",
 	"TG-WS-PROXY-LICENSE.txt",
 	"ZAPRET1-LICENSE.txt",
+	"FLOWSEAL-LICENSE.txt",
 	"windivert_part.discord_media.txt",
 	"windivert_part.quic_initial_ietf.txt",
 	"windivert_part.quic_initial_in.txt",
