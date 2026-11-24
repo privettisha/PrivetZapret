@@ -3,6 +3,8 @@ package main
 import (
 	"net"
 	"net/http"
+	"net/http/httptrace"
+	"sync/atomic"
 	"time"
 )
 
@@ -56,13 +58,26 @@ func checkEndpoint(client *http.Client, address string) EndpointCheck {
 	if err != nil {
 		return EndpointCheck{Error: "Некорректный адрес"}
 	}
+	// A timeout before TCP connects calls for a different fix than a timeout
+	// during TLS or while waiting for an HTTP response. Keep the report useful
+	// without exposing a user's address, DNS answer or request details.
+	var stage atomic.Value
+	stage.Store("соединение")
+	trace := &httptrace.ClientTrace{
+		DNSStart:          func(httptrace.DNSStartInfo) { stage.Store("DNS") },
+		ConnectStart:      func(_, _ string) { stage.Store("TCP") },
+		TLSHandshakeStart: func() { stage.Store("TLS") },
+		WroteRequest:      func(httptrace.WroteRequestInfo) { stage.Store("HTTP") },
+	}
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	req.Header.Set("User-Agent", "PrivetZapret/"+appVersion)
 	resp, err := client.Do(req)
 	if err != nil {
+		phase := stage.Load().(string)
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return EndpointCheck{Error: "Тайм-аут"}
+			return EndpointCheck{Error: phase + ": тайм-аут"}
 		}
-		return EndpointCheck{Error: "Нет соединения"}
+		return EndpointCheck{Error: phase + ": ошибка соединения"}
 	}
 	_ = resp.Body.Close()
 	return EndpointCheck{Reachable: true, HTTPCode: resp.StatusCode}
