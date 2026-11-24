@@ -9,36 +9,42 @@ import (
 )
 
 type SystemReport struct {
-	Time                string                   `json:"time"`
-	Version             string                   `json:"version"`
-	Platform            string                   `json:"platform"`
-	Installed           bool                     `json:"installed"`
-	Active              bool                     `json:"active"`
-	EngineProcesses     int                      `json:"engine_processes"`
-	Services            []string                 `json:"services"`
-	Profiles            map[string]string        `json:"profiles"`
-	YoutubeProfile      string                   `json:"youtube_profile"`
-	AutoHostlist        bool                     `json:"auto_hostlist"`
-	TelegramReady       bool                     `json:"telegram_ready"`
-	TelegramMediaErrors int                      `json:"telegram_media_errors_recent"`
-	DNSEnabled          bool                     `json:"dns_enabled"`
-	DNSActive           bool                     `json:"dns_active"`
-	Conflicts           []string                 `json:"conflicts"`
-	VPNInterfaces       []string                 `json:"vpn_interfaces"`
-	Endpoints           map[string]EndpointCheck `json:"endpoints"`
+	Time                 string                   `json:"time"`
+	Version              string                   `json:"version"`
+	InstalledVersion     string                   `json:"installed_version,omitempty"`
+	Platform             string                   `json:"platform"`
+	Installed            bool                     `json:"installed"`
+	Active               bool                     `json:"active"`
+	EngineProcesses      int                      `json:"engine_processes"`
+	Services             []string                 `json:"services"`
+	Profiles             map[string]string        `json:"profiles"`
+	YoutubeProfile       string                   `json:"youtube_profile"`
+	AutoHostlist         bool                     `json:"auto_hostlist"`
+	TelegramReady        bool                     `json:"telegram_ready"`
+	TelegramMediaErrors  int                      `json:"telegram_media_errors_recent"`
+	YouTubeWarpConnected bool                     `json:"youtube_warp_connected"`
+	DNSEnabled           bool                     `json:"dns_enabled"`
+	DNSActive            bool                     `json:"dns_active"`
+	Conflicts            []string                 `json:"conflicts"`
+	VPNInterfaces        []string                 `json:"vpn_interfaces"`
+	Endpoints            map[string]EndpointCheck `json:"endpoints"`
 }
 
 func systemDiagnostics() SystemReport {
 	status := platformStatus()
 	report := SystemReport{
-		Time: time.Now().Format(time.RFC3339), Version: appVersion,
+		Time: time.Now().Format(time.RFC3339), Version: appVersion, InstalledVersion: status.InstalledVersion,
 		Platform: status.Platform, Installed: status.Installed, Active: status.Active, EngineProcesses: status.EngineProcesses,
 		Services: status.Services, Profiles: status.Profiles,
 		YoutubeProfile: status.YoutubeProfile, AutoHostlist: status.AutoHostlist,
 		TelegramReady: status.TelegramReady, Conflicts: platformOtherFilters(),
-		TelegramMediaErrors: recentTelegramMediaErrors(),
-		DNSEnabled:          status.DNSEnabled, DNSActive: status.DNSActive,
+		TelegramMediaErrors:  recentTelegramMediaErrors(),
+		YouTubeWarpConnected: youtubeWarpConnected(),
+		DNSEnabled:           status.DNSEnabled, DNSActive: status.DNSActive,
 		Endpoints: connectivityCheck(),
+	}
+	if report.YouTubeWarpConnected {
+		report.Endpoints["video_server_via_warp"] = warpMediaProbe()
 	}
 	interfaces, _ := net.Interfaces()
 	for _, iface := range interfaces {

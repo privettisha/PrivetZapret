@@ -145,7 +145,7 @@ func usableProbe(service, url string, check EndpointCheck) bool {
 	if !check.Reachable {
 		return false
 	}
-	if url == youtubeMediaProbeURL {
+	if url == youtubeMediaProbeURL || url == youtubeWarpMediaProbeURL {
 		// The CDN root normally has no video token, so a 404 still proves
 		// TCP/TLS reached the edge. A 403 can be a network block page.
 		return check.HTTPCode >= 200 && check.HTTPCode < 400 || check.HTTPCode == 404

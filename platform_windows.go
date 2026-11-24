@@ -101,7 +101,8 @@ func platformStatus() Status {
 		active = true
 	}
 	cfg := loadConfig(windowsConfigPath())
-	status := statusSettings(Status{Installed: installed, Active: active, ServiceRunning: serviceRunning, EngineProcesses: engineProcesses, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(windowsVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
+	version := installedVersion(windowsVersionPath())
+	status := statusSettings(Status{Installed: installed, Active: active, ServiceRunning: serviceRunning, EngineProcesses: engineProcesses, Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Windows · " + runtime.GOARCH, InstalledVersion: version, NeedsUpdate: installed && version != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
 	status.DNSSupported = true
 	status.DNSActive = active && cfg.DNSEnabled && windowsDNSApplied()
 	_, err = os.Stat(rollbackPath())

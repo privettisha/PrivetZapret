@@ -86,7 +86,8 @@ func platformStatus() Status {
 	active := serviceRunning || len(pids) > 0
 	installed := statErr == nil
 	cfg := loadConfig(linuxConfigPath())
-	status := statusSettings(Status{Installed: installed, Active: active, ServiceRunning: serviceRunning, EngineProcesses: len(pids), Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Linux · " + runtime.GOARCH, NeedsUpdate: installed && installedVersion(linuxVersionPath()) != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
+	version := installedVersion(linuxVersionPath())
+	status := statusSettings(Status{Installed: installed, Active: active, ServiceRunning: serviceRunning, EngineProcesses: len(pids), Mode: cfg.Mode, YoutubeProfile: cfg.YoutubeProfile, Platform: "Linux · " + runtime.GOARCH, InstalledVersion: version, NeedsUpdate: installed && version != appVersion, TelegramReady: active && hasService(cfg.Services, "telegram") && telegramProxyReady(), Services: cfg.Services, Catalog: serviceCatalog}, cfg)
 	status.DNSSupported = true
 	status.DNSActive = active && cfg.DNSEnabled && linuxDNSApplied()
 	_, err := os.Stat(rollbackPath())
@@ -201,10 +202,11 @@ func platformStop() error {
 	orphanErr := stopLinuxEngines()
 	_ = deleteNftTable()
 	dnsErr := restoreLinuxDNS()
+	warpErr := stopYouTubeWarp()
 	if err != nil {
-		return errors.Join(fmt.Errorf("остановка: %s", strings.TrimSpace(string(out))), orphanErr, dnsErr)
+		return errors.Join(fmt.Errorf("остановка: %s", strings.TrimSpace(string(out))), orphanErr, dnsErr, warpErr)
 	}
-	return errors.Join(orphanErr, dnsErr)
+	return errors.Join(orphanErr, dnsErr, warpErr)
 }
 
 func linuxEnginePIDs() ([]int, error) {
@@ -519,6 +521,7 @@ func runLinuxDaemon() error {
 		}
 		_ = stopLinuxEngines()
 		_ = deleteNftTable()
+		_ = stopYouTubeWarp()
 	}()
 	if cfg.DNSEnabled {
 		state, err := readLinuxDNSState()

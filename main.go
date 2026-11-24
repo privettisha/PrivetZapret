@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,8 @@ func runDesktop() {
 	detail.Wrapping = fyne.TextWrapWord
 	primary := widget.NewButton("", nil)
 	primary.Importance = widget.HighImportance
+	upgrade := widget.NewButton("Установить новую версию и включить", nil)
+	upgrade.Importance = widget.HighImportance
 	remove := widget.NewButton("Удалить программу и остановить процессы", nil)
 	refresh := widget.NewButton("Обновить состояние", nil)
 	mode := widget.NewSelect([]string{"Совместимый", "Сбалансированный", "Сильный"}, nil)
@@ -82,6 +85,11 @@ func runDesktop() {
 	applyMode := widget.NewButton("Применить режим", nil)
 	applyProfile := widget.NewButton("Применить профиль YouTube", nil)
 	autoYouTube := widget.NewButton("Подобрать профиль YouTube", nil)
+	videoWarp := widget.NewButton("Открыть YouTube через WARP", nil)
+	videoWarp.Importance = widget.HighImportance
+	stopVideoWarp := widget.NewButton("Отключить видеомаршрут WARP", nil)
+	videoWarpState := widget.NewLabel("")
+	videoWarpState.Wrapping = fyne.TextWrapWord
 	serviceChecks := make(map[string]*widget.Check)
 	serviceSearch := widget.NewEntry()
 	serviceSearch.SetPlaceHolder("Найти сервис")
@@ -181,7 +189,11 @@ func runDesktop() {
 			primary.Importance = widget.DangerImportance
 		} else if s.Installed {
 			state.SetText("Выключено")
-			primary.SetText("Включить")
+			if s.NeedsUpdate {
+				primary.SetText("Обновить и включить")
+			} else {
+				primary.SetText("Включить")
+			}
 			primary.Importance = widget.HighImportance
 		} else {
 			state.SetText("Не установлено")
@@ -189,7 +201,22 @@ func runDesktop() {
 			primary.Importance = widget.HighImportance
 		}
 		primary.Refresh()
-		detail.SetText(fmt.Sprintf("%s · версия %s · процессов движка: %d · выбрано сервисов: %d. Закрытие окна выключает службу.", s.Platform, appVersion, s.EngineProcesses, len(s.Services)))
+		installedVersionText := s.InstalledVersion
+		if installedVersionText == "" {
+			installedVersionText = "неизвестна"
+		}
+		if s.NeedsUpdate {
+			detail.SetText(fmt.Sprintf("%s · установлена версия %s, в окне %s · процессов движка: %d. Обновите службу, чтобы новые правила заработали.", s.Platform, installedVersionText, appVersion, s.EngineProcesses))
+			upgrade.Show()
+		} else {
+			detail.SetText(fmt.Sprintf("%s · версия %s · процессов движка: %d · выбрано сервисов: %d. Закрытие окна выключает службу.", s.Platform, appVersion, s.EngineProcesses, len(s.Services)))
+			upgrade.Hide()
+		}
+		if s.NeedsUpdate && !busy {
+			upgrade.Enable()
+		} else {
+			upgrade.Disable()
+		}
 		if s.TelegramReady {
 			telegramState.SetText("Локальный прокси Telegram работает на 127.0.0.1. Для загрузки медиа Telegram должен быть подключён к нему.")
 		} else if s.Active && hasService(s.Services, "telegram") {
@@ -266,6 +293,29 @@ func runDesktop() {
 		} else {
 			autoYouTube.Disable()
 		}
+		if runtime.GOOS == "windows" {
+			videoWarpState.SetText("Запасной маршрут WARP пока доступен только в версии для Arch Linux.")
+			videoWarp.Disable()
+		} else if !youtubeWarpSupported() {
+			videoWarpState.SetText("Для видеомаршрута нужен установленный Cloudflare WARP.")
+			videoWarp.Disable()
+		} else if s.NeedsUpdate {
+			videoWarpState.SetText("Сначала обновите установленную службу PrivetZapret.")
+			videoWarp.Disable()
+		} else if s.Active && !busy && hasService(s.Services, "youtube") {
+			videoWarpState.SetText("Откроется отдельный браузер: через WARP пойдут YouTube и видеосерверы, остальные сайты — напрямую.")
+			videoWarp.Enable()
+		} else {
+			videoWarpState.SetText("Включите YouTube в PrivetZapret для запуска видеомаршрута.")
+			videoWarp.Disable()
+		}
+		if youtubeWarpOwned() && !busy {
+			stopVideoWarp.Enable()
+			stopVideoWarp.Show()
+		} else {
+			stopVideoWarp.Disable()
+			stopVideoWarp.Hide()
+		}
 		if s.Active && !busy && hasService(s.Services, "discord") {
 			autoDiscord.Enable()
 		} else {
@@ -285,6 +335,17 @@ func runDesktop() {
 		}
 		if !hasService(s.Services, "telegram") {
 			applyTelegramRoute.Disable()
+		}
+		if s.NeedsUpdate {
+			applyMode.Disable()
+			applyProfile.Disable()
+			autoYouTube.Disable()
+			autoDiscord.Disable()
+			applyServices.Disable()
+			applyDNS.Disable()
+			applyTelegramRoute.Disable()
+			repair.Disable()
+			saveSettings.Disable()
 		}
 		if s.DNSSupported {
 			dnsInput.Enable()
@@ -315,7 +376,7 @@ func runDesktop() {
 		}()
 	}
 	primary.OnTapped = func() {
-		active, installed, selectedMode := status.Active, status.Installed, modeIDs[mode.Selected]
+		active, installed, needsUpdate, selectedMode := status.Active, status.Installed, status.NeedsUpdate, modeIDs[mode.Selected]
 		act(func() error {
 			if active {
 				return platformStop()
@@ -323,10 +384,19 @@ func runDesktop() {
 			if err := ensureLease(); err != nil {
 				return err
 			}
-			if !installed {
+			if !installed || needsUpdate {
 				return platformInstall(selectedMode)
 			}
 			return platformStart()
+		})
+	}
+	upgrade.OnTapped = func() {
+		selectedMode := modeIDs[mode.Selected]
+		act(func() error {
+			if err := ensureLease(); err != nil {
+				return err
+			}
+			return platformInstall(selectedMode)
 		})
 	}
 	remove.OnTapped = func() {
@@ -360,6 +430,8 @@ func runDesktop() {
 		act(func() error { return platformSetYoutubeProfile(selected) })
 	}
 	autoYouTube.OnTapped = func() { act(func() error { _, err := autoTune("youtube"); return err }) }
+	videoWarp.OnTapped = func() { act(startYouTubeWarp) }
+	stopVideoWarp.OnTapped = func() { act(stopYouTubeWarp) }
 	applyServices.OnTapped = func() {
 		var selected []string
 		for _, service := range serviceCatalog {
@@ -425,8 +497,11 @@ func runDesktop() {
 					}
 					return fmt.Sprintf("отвечает, HTTP %d", check.HTTPCode)
 				}
-				human := fmt.Sprintf("Служба: %s\nПроцессы движка: %d\nYouTube: %s\nВидеосервер Googlevideo: %s\nTelegram-прокси: %s\nНедавние ошибки медиа Telegram: %d\nСистемный DNS: %s\nДругие фильтры: %s\nVPN: %s",
+				human := fmt.Sprintf("Служба: %s\nПроцессы движка: %d\nYouTube: %s\nВидеосервер Googlevideo напрямую: %s\nTelegram-прокси: %s\nНедавние ошибки медиа Telegram: %d\nСистемный DNS: %s\nДругие фильтры: %s\nVPN: %s",
 					yesNo(result.Active), result.EngineProcesses, endpoint("youtube"), endpoint("video_server"), yesNo(result.TelegramReady), result.TelegramMediaErrors, yesNo(result.DNSActive), strings.Join(result.Conflicts, ", "), strings.Join(result.VPNInterfaces, ", "))
+				if result.YouTubeWarpConnected {
+					human += "\nВидеосервер через WARP: " + endpoint("video_server_via_warp")
+				}
 				if result.Endpoints["youtube"].Reachable && !result.Endpoints["video_server"].Reachable {
 					human += "\n\nСайт YouTube отвечает, но пример видеосервера недоступен. Если соединение блокируется до TLS, переключение режима может не помочь."
 				}
@@ -475,9 +550,9 @@ func runDesktop() {
 	rollback.OnTapped = func() { act(rollbackUpdate) }
 
 	connectionTab := container.NewVScroll(container.NewVBox(
-		widget.NewCard("Состояние", "Служба и процессы", container.NewVBox(state, detail, primary, refresh)),
+		widget.NewCard("Состояние", "Служба и процессы", container.NewVBox(state, detail, primary, upgrade, refresh)),
 		widget.NewCard("Режим соединения", "Режим влияет на число попыток и разделение пакетов", container.NewVBox(mode, applyMode)),
-		widget.NewCard("YouTube", "Если видео не идёт, проверьте видеосервер и смените профиль", container.NewVBox(profile, applyProfile, autoYouTube)),
+		widget.NewCard("YouTube", "Если видео не идёт, проверьте видеосервер и смените профиль", container.NewVBox(profile, applyProfile, autoYouTube, videoWarpState, videoWarp, stopVideoWarp)),
 		widget.NewCard("Telegram", "Подключите локальный прокси в Telegram Desktop", container.NewVBox(telegramState, telegramOpen, telegramCopy, telegramRoute, applyTelegramRoute)),
 		remove,
 	))

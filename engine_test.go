@@ -73,6 +73,18 @@ func TestYoutubeProfilesAcceptedByZapret2(t *testing.T) {
 	if !strings.Contains(joined, "--hostlist="+filepath.Join(dir, "selected-youtube-media.txt")+" --payload=quic_initial --lua-desync=drop") {
 		t.Fatal("YouTube media must fall back to TCP separately from the web page")
 	}
+	mediaTCP := "--filter-tcp=443 --filter-l7=tls --ipset-exclude-ip=2.26.225.138,31.76.251.3 --hostlist=" + filepath.Join(dir, "selected-youtube-media.txt")
+	pageTCP := "--filter-tcp=443 --filter-l7=tls --ipset-exclude-ip=2.26.225.138,31.76.251.3 --hostlist=" + filepath.Join(dir, "selected-youtube.txt")
+	if mediaAt, pageAt := strings.Index(joined, mediaTCP), strings.Index(joined, pageTCP); mediaAt < 0 || pageAt < 0 || mediaAt >= pageAt {
+		t.Fatal("Googlevideo TCP must receive its own rule before the YouTube page")
+	}
+	if !strings.Contains(joined, "--lua-desync=hostfakesplit:host=www.google.com:ip_id=zero") {
+		t.Fatal("standard Googlevideo strategy must include hostfakesplit")
+	}
+	splitArgs := strings.Join(strategyArgs(dir, "balanced", defaultServices(), "split"), " ")
+	if !strings.Contains(splitArgs, "--lua-desync=multisplit:pos=1,midsld:seqovl=681:seqovl_pattern=fake_default_tls:ip_id=zero") {
+		t.Fatal("split Googlevideo strategy must include TLS overlap")
+	}
 }
 
 func TestFullCatalogStrategyAcceptedByZapret2(t *testing.T) {

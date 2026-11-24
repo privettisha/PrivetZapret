@@ -14,7 +14,7 @@ import (
 const (
 	appName     = "PrivetZapret"
 	serviceName = "PrivetZapret"
-	appVersion  = "0.7.4"
+	appVersion  = "0.7.5"
 	tgProxyPort = 14430
 )
 
@@ -43,6 +43,7 @@ type Status struct {
 	YoutubeProfile    string              `json:"youtube_profile"`
 	TelegramRoute     string              `json:"telegram_route"`
 	Platform          string              `json:"platform"`
+	InstalledVersion  string              `json:"installed_version,omitempty"`
 	Message           string              `json:"message,omitempty"`
 	NeedsUpdate       bool                `json:"needs_update"`
 	TelegramReady     bool                `json:"telegram_ready"`

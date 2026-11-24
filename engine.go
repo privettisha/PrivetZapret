@@ -87,19 +87,33 @@ func strategyArgsConfig(dir string, cfg Config) []string {
 		profile := normalizeYoutubeProfile(cfg.YoutubeProfile)
 		youtubeFake := fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats)
 		youtubeSplit := split
+		// Flowseal's current Google profile uses hostfakesplit. Keep a separate
+		// media rule so the Googlevideo TLS handshake can use that technique
+		// without changing the already reachable YouTube page.
+		mediaDesync := []string{"--lua-desync=hostfakesplit:host=www.google.com:ip_id=zero"}
 		quicDesync := fmt.Sprintf("fake:blob=quic_google:repeats=%d", repeats)
 		switch profile {
 		case "split":
 			youtubeFake = fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats)
 			youtubeSplit = "multisplit:pos=1,midsld"
+			mediaDesync = []string{
+				"--lua-desync=" + youtubeFake,
+				"--lua-desync=multisplit:pos=1,midsld:seqovl=681:seqovl_pattern=fake_default_tls:ip_id=zero",
+			}
 		case "alternative", "tcp":
 			youtubeFake = fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=%d", repeats)
 			youtubeSplit = "multidisorder:pos=midsld"
+			mediaDesync = []string{"--lua-desync=" + youtubeFake, "--lua-desync=multidisorder:pos=midsld:ip_id=zero"}
 			if profile == "tcp" {
 				// Only YouTube QUIC is dropped; browsers retry the same host over TCP.
 				quicDesync = "drop"
 			}
 		}
+		args = append(args, "--filter-tcp=443", "--filter-l7=tls", proxyExcludes, "--hostlist="+p("selected-youtube-media.txt"))
+		args = append(args, exclude...)
+		args = append(args, "--out-range=-d10", "--payload=tls_client_hello")
+		args = append(args, mediaDesync...)
+		args = append(args, "--new")
 		args = append(args,
 			"--filter-tcp=443", "--filter-l7=tls", proxyExcludes, "--hostlist="+p("selected-youtube.txt"))
 		args = append(args, exclude...)

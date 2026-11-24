@@ -18,6 +18,10 @@ type EndpointCheck struct {
 // always-reachable redirector/report_mapping endpoint. It is a sample host,
 // not a test of the exact CDN assigned to every video/account.
 const youtubeMediaProbeURL = "https://rr2---sn-ug5onuxaxjvh-v8cz.googlevideo.com/"
+
+// This sample is selected when YouTube itself is routed through WARP. The
+// service can assign a different CDN to every network and video.
+const youtubeWarpMediaProbeURL = "https://rr3---sn-ojnpo5-ci.googlevideo.com/"
 const youtubeMappingProbeURL = "https://redirector.googlevideo.com/report_mapping"
 const soundcloudMediaProbeURL = "https://cf-media.sndcdn.com/"
 
