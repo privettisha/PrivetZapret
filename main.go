@@ -83,13 +83,54 @@ func runDesktop() {
 	applyProfile := widget.NewButton("Применить профиль YouTube", nil)
 	autoYouTube := widget.NewButton("Подобрать профиль YouTube", nil)
 	serviceChecks := make(map[string]*widget.Check)
-	serviceRows := make([]fyne.CanvasObject, 0, len(serviceCatalog))
-	for _, service := range serviceCatalog {
-		service := service
-		check := widget.NewCheck(service.Name, nil)
-		serviceChecks[service.ID] = check
-		serviceRows = append(serviceRows, check)
+	serviceSearch := widget.NewEntry()
+	serviceSearch.SetPlaceHolder("Найти сервис")
+	serviceList := container.NewVBox()
+	serviceSummary := widget.NewLabel("")
+	refreshServiceSummary := func() {
+		count := 0
+		for _, check := range serviceChecks {
+			if check.Checked {
+				count++
+			}
+		}
+		serviceSummary.SetText(fmt.Sprintf("Выбрано сервисов: %d", count))
 	}
+	for _, service := range serviceCatalog {
+		check := widget.NewCheck(service.Name, func(bool) { refreshServiceSummary() })
+		serviceChecks[service.ID] = check
+	}
+	renderServiceList := func(query string) {
+		query = strings.ToLower(strings.TrimSpace(query))
+		objects := make([]fyne.CanvasObject, 0, len(serviceCatalog)+8)
+		category := ""
+		for _, service := range serviceCatalog {
+			if query != "" && !strings.Contains(strings.ToLower(service.Name+" "+service.Category+" "+service.Description), query) {
+				continue
+			}
+			if service.Category != category {
+				category = service.Category
+				objects = append(objects, widget.NewLabelWithStyle(category, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+			}
+			objects = append(objects, serviceChecks[service.ID])
+		}
+		if len(objects) == 0 {
+			objects = append(objects, widget.NewLabel("Сервис не найден"))
+		}
+		serviceList.Objects = objects
+		serviceList.Refresh()
+	}
+	serviceSearch.OnChanged = renderServiceList
+	selectDefault := widget.NewButton("Основные", func() {
+		for _, service := range serviceCatalog {
+			serviceChecks[service.ID].SetChecked(service.Default)
+		}
+	})
+	selectAll := widget.NewButton("Выбрать все", func() {
+		for _, check := range serviceChecks {
+			check.SetChecked(true)
+		}
+	})
 	applyServices := widget.NewButton("Применить выбранные сервисы", nil)
 	applyServices.Importance = widget.HighImportance
 	customDomains := widget.NewMultiLineEntry()
@@ -170,6 +211,7 @@ func runDesktop() {
 			for id, check := range serviceChecks {
 				check.SetChecked(hasService(s.Services, id))
 			}
+			refreshServiceSummary()
 			dnsInput.SetText(s.DNSURL)
 			dnsEnable.SetChecked(s.DNSEnabled)
 			customDomains.SetText(strings.Join(s.CustomDomains, "\n"))
@@ -439,7 +481,7 @@ func runDesktop() {
 		widget.NewCard("Telegram", "Подключите локальный прокси в Telegram Desktop", container.NewVBox(telegramState, telegramOpen, telegramCopy, telegramRoute, applyTelegramRoute)),
 		remove,
 	))
-	servicesTab := container.NewBorder(nil, applyServices, nil, nil, container.NewVScroll(container.NewVBox(serviceRows...)))
+	servicesTab := container.NewBorder(container.NewVBox(serviceSearch, container.NewHBox(selectDefault, selectAll), serviceSummary), applyServices, nil, nil, container.NewVScroll(serviceList))
 	settingsTab := container.NewVScroll(container.NewVBox(
 		widget.NewCard("Свои домены", "Укажите адреса, которые нужно обрабатывать", customDomains),
 		widget.NewCard("Исключения", "Не обрабатывать эти адреса", excludeDomains),
@@ -458,6 +500,7 @@ func runDesktop() {
 		container.NewTabItem("Проверка", checkTab),
 	)
 	w.SetContent(tabs)
+	renderServiceList("")
 	updateView(status, true)
 	refreshDone := make(chan struct{})
 	go func() {
