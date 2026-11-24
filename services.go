@@ -168,9 +168,10 @@ func writeSelectedHostlists(dir string, services []string) error {
 
 func writeSelectedHostlistsConfig(dir string, cfg Config) error {
 	selected := normalizeServices(cfg.Services)
-	groups := map[string][]string{"youtube": {}, "youtube-media": {}, "discord": {}, "discord-media": {}, "telegram": {}, "generic": {}}
+	groups := map[string][]string{"all": {}, "youtube": {}, "youtube-media": {}, "discord": {}, "discord-media": {}, "telegram": {}, "generic": {}}
 	for _, id := range selected {
 		service, _ := serviceByID(id)
+		groups["all"] = append(groups["all"], service.Domains...)
 		groups[id] = append(groups[id], service.Domains...)
 		if id == "youtube" {
 			groups["youtube-media"] = append(groups["youtube-media"], "googlevideo.com")
@@ -182,6 +183,7 @@ func writeSelectedHostlistsConfig(dir string, cfg Config) error {
 			groups["generic"] = append(groups["generic"], service.Domains...)
 		}
 	}
+	groups["all"] = append(groups["all"], cfg.CustomDomains...)
 	for group, domains := range groups {
 		unique := make(map[string]bool)
 		for _, domain := range domains {

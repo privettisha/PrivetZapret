@@ -14,7 +14,7 @@ import (
 const (
 	appName     = "PrivetZapret"
 	serviceName = "PrivetZapret"
-	appVersion  = "0.7.5"
+	appVersion  = "0.7.6"
 	tgProxyPort = 14430
 )
 

@@ -20,6 +20,7 @@ var commonFiles = []string{
 	"telegram.txt",
 	"ZAPRET2-LICENSE.txt",
 	"TG-WS-PROXY-LICENSE.txt",
+	"ZAPRET1-LICENSE.txt",
 	"windivert_part.discord_media.txt",
 	"windivert_part.quic_initial_ietf.txt",
 	"windivert_part.quic_initial_in.txt",

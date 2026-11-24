@@ -96,6 +96,7 @@ func platformStatus() Status {
 }
 
 func platformInstall(mode string) error {
+	previousVersion := installedVersion(linuxVersionPath())
 	if platformStatus().Installed {
 		if err := platformStop(); err != nil {
 			return err
@@ -120,6 +121,13 @@ func platformInstall(mode string) error {
 	if err := os.WriteFile(filepath.Join(linuxInstallDir, "nfqws2"), b, 0755); err != nil {
 		return err
 	}
+	legacy, err := linuxPayload.ReadFile("payload/linux/nfqws")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(linuxInstallDir, "nfqws"), legacy, 0755); err != nil {
+		return err
+	}
 	tg, err := linuxPayload.ReadFile("payload/linux/PrivetTgWs")
 	if err != nil {
 		return err
@@ -141,7 +149,16 @@ func platformInstall(mode string) error {
 			return err
 		}
 	}
-	if err := saveConfig(linuxConfigPath(), mode); err != nil {
+	if previousVersion != "" && previousVersion != appVersion {
+		// An upgrade must actually select the profile that is known to work on
+		// this Linux machine, even if an earlier experiment left a different
+		// profile in the saved configuration.
+		cfg := loadConfig(linuxConfigPath())
+		cfg.Mode, cfg.YoutubeProfile = "balanced", "standard"
+		if err := saveConfigValue(linuxConfigPath(), cfg); err != nil {
+			return err
+		}
+	} else if err := saveConfig(linuxConfigPath(), mode); err != nil {
 		return err
 	}
 	if err := writeFileIfChanged(linuxVersionPath(), []byte(appVersion+"\n"), 0644); err != nil {
@@ -169,18 +186,38 @@ WantedBy=multi-user.target
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemd: %s", strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.Command("systemctl", "start", "privetzapret.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("запуск: %s", strings.TrimSpace(string(out)))
-	}
-	return verifyLinuxStarted()
+	return startLinuxService()
 }
 
 func platformStart() error {
+	return startLinuxService()
+}
+
+func startLinuxService() error {
+	// A second NFQUEUE engine can hide failures and produce misleading test
+	// results. Switch from an active external zapret only when the user starts
+	// PrivetZapret, and restore it if our own service fails to start.
+	externalWasActive := exec.Command("systemctl", "is-active", "--quiet", "zapret.service").Run() == nil
+	if externalWasActive {
+		if out, err := exec.Command("systemctl", "stop", "zapret.service").CombinedOutput(); err != nil {
+			return fmt.Errorf("остановка другого zapret: %s", strings.TrimSpace(string(out)))
+		}
+	}
 	out, err := exec.Command("systemctl", "start", "privetzapret.service").CombinedOutput()
 	if err != nil {
+		if externalWasActive {
+			_ = exec.Command("systemctl", "start", "zapret.service").Run()
+		}
 		return fmt.Errorf("запуск: %s", strings.TrimSpace(string(out)))
 	}
-	return verifyLinuxStarted()
+	if err := verifyLinuxStarted(); err != nil {
+		_ = platformStop()
+		if externalWasActive {
+			_ = exec.Command("systemctl", "start", "zapret.service").Run()
+		}
+		return err
+	}
+	return nil
 }
 
 func verifyLinuxStarted() error {
@@ -228,7 +265,7 @@ func linuxEnginePIDs() ([]int, error) {
 			continue
 		}
 		exe = strings.TrimSuffix(exe, " (deleted)")
-		if exe != filepath.Join(linuxInstallDir, "nfqws2") && exe != filepath.Join(linuxInstallDir, "PrivetTgWs") {
+		if exe != filepath.Join(linuxInstallDir, "nfqws2") && exe != filepath.Join(linuxInstallDir, "nfqws") && exe != filepath.Join(linuxInstallDir, "PrivetTgWs") {
 			continue
 		}
 		pids = append(pids, pid)
@@ -459,8 +496,13 @@ func runLinuxDaemon() error {
 	if err := writeSelectedHostlistsConfig(linuxInstallDir, cfg); err != nil {
 		return err
 	}
+	engine := "nfqws2"
 	args := append([]string{"--qnum=300"}, strategyArgsConfig(linuxInstallDir, cfg)...)
-	cmd := exec.Command(filepath.Join(linuxInstallDir, "nfqws2"), args...)
+	if hasService(cfg.Services, "youtube") && normalizeYoutubeProfile(cfg.YoutubeProfile) == "standard" {
+		engine = "nfqws"
+		args = append([]string{"--qnum=300"}, provenLinuxStrategyArgs(linuxInstallDir, cfg)...)
+	}
+	cmd := exec.Command(filepath.Join(linuxInstallDir, engine), args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err

@@ -549,10 +549,14 @@ func runDesktop() {
 	}
 	rollback.OnTapped = func() { act(rollbackUpdate) }
 
+	youtubeSubtitle := "Если видео не идёт, проверьте видеосервер и смените профиль"
+	if runtime.GOOS == "linux" {
+		youtubeSubtitle = "«Стандарт» повторяет параметры работающего zapret на этом компьютере"
+	}
 	connectionTab := container.NewVScroll(container.NewVBox(
 		widget.NewCard("Состояние", "Служба и процессы", container.NewVBox(state, detail, primary, upgrade, refresh)),
 		widget.NewCard("Режим соединения", "Режим влияет на число попыток и разделение пакетов", container.NewVBox(mode, applyMode)),
-		widget.NewCard("YouTube", "Если видео не идёт, проверьте видеосервер и смените профиль", container.NewVBox(profile, applyProfile, autoYouTube, videoWarpState, videoWarp, stopVideoWarp)),
+		widget.NewCard("YouTube", youtubeSubtitle, container.NewVBox(profile, applyProfile, autoYouTube, videoWarpState, videoWarp, stopVideoWarp)),
 		widget.NewCard("Telegram", "Подключите локальный прокси в Telegram Desktop", container.NewVBox(telegramState, telegramOpen, telegramCopy, telegramRoute, applyTelegramRoute)),
 		remove,
 	))
