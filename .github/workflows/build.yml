@@ -29,8 +29,8 @@ jobs:
         shell: bash
         run: |
           git clone https://github.com/Flowseal/tg-ws-proxy.git tgws
-          git -C tgws checkout --detach 307a384ab7f522e34bb1a045884d0bd90f40bee5
-          test "$(git -C tgws rev-parse HEAD)" = "307a384ab7f522e34bb1a045884d0bd90f40bee5"
+          git -C tgws checkout --detach 3fc8b9ee984fc36f52d59b2323735dc8d681864d
+          test "$(git -C tgws rev-parse HEAD)" = "3fc8b9ee984fc36f52d59b2323735dc8d681864d"
           python build/patch_tgws.py
       - name: Build headless Telegram helper
         shell: bash
@@ -50,6 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install desktop build tools
+        run: sudo apt-get update && sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev mingw-w64
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -70,8 +72,8 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -H=windowsgui" -o dist/PrivetZapret-Windows-x64.exe .
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/PrivetZapret-Arch-x64 .
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc go build -trimpath -ldflags="-s -w -H=windowsgui" -o dist/PrivetZapret-Windows-x64.exe .
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/PrivetZapret-Arch-x64 .
           cd dist
           sha256sum PrivetZapret-Windows-x64.exe PrivetZapret-Arch-x64 > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4

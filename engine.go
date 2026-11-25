@@ -20,6 +20,8 @@ var commonFiles = []string{
 	"telegram.txt",
 	"ZAPRET2-LICENSE.txt",
 	"TG-WS-PROXY-LICENSE.txt",
+	"ZAPRET1-LICENSE.txt",
+	"FLOWSEAL-LICENSE.txt",
 	"windivert_part.discord_media.txt",
 	"windivert_part.quic_initial_ietf.txt",
 	"windivert_part.quic_initial_in.txt",
@@ -87,19 +89,33 @@ func strategyArgsConfig(dir string, cfg Config) []string {
 		profile := normalizeYoutubeProfile(cfg.YoutubeProfile)
 		youtubeFake := fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats)
 		youtubeSplit := split
+		// Flowseal's current Google profile uses hostfakesplit. Keep a separate
+		// media rule so the Googlevideo TLS handshake can use that technique
+		// without changing the already reachable YouTube page.
+		mediaDesync := []string{"--lua-desync=hostfakesplit:host=www.google.com:ip_id=zero"}
 		quicDesync := fmt.Sprintf("fake:blob=quic_google:repeats=%d", repeats)
 		switch profile {
 		case "split":
-			youtubeFake = "fake:blob=fake_default_tls:tcp_md5:repeats=6:tls_mod=rnd,dupsid,sni=www.google.com"
+			youtubeFake = fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:repeats=%d:tls_mod=rnd,dupsid,sni=www.google.com", repeats)
 			youtubeSplit = "multisplit:pos=1,midsld"
+			mediaDesync = []string{
+				"--lua-desync=" + youtubeFake,
+				"--lua-desync=multisplit:pos=1,midsld:seqovl=681:seqovl_pattern=fake_default_tls:ip_id=zero",
+			}
 		case "alternative", "tcp":
-			youtubeFake = "fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=6"
+			youtubeFake = fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=%d", repeats)
 			youtubeSplit = "multidisorder:pos=midsld"
+			mediaDesync = []string{"--lua-desync=" + youtubeFake, "--lua-desync=multidisorder:pos=midsld:ip_id=zero"}
 			if profile == "tcp" {
 				// Only YouTube QUIC is dropped; browsers retry the same host over TCP.
 				quicDesync = "drop"
 			}
 		}
+		args = append(args, "--filter-tcp=443", "--filter-l7=tls", proxyExcludes, "--hostlist="+p("selected-youtube-media.txt"))
+		args = append(args, exclude...)
+		args = append(args, "--out-range=-d10", "--payload=tls_client_hello")
+		args = append(args, mediaDesync...)
+		args = append(args, "--new")
 		args = append(args,
 			"--filter-tcp=443", "--filter-l7=tls", proxyExcludes, "--hostlist="+p("selected-youtube.txt"))
 		args = append(args, exclude...)
@@ -220,11 +236,11 @@ func profileStrategy(profile string, repeats int, split string) (string, string,
 	quic := fmt.Sprintf("fake:blob=quic_google:repeats=%d", repeats)
 	switch profile {
 	case "split":
-		return "fake:blob=fake_default_tls:tcp_md5:repeats=6", "multisplit:pos=1,midsld", quic
+		return fake, "multisplit:pos=1,midsld", quic
 	case "alternative":
-		return "fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=6", "multidisorder:pos=midsld", quic
+		return fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=%d", repeats), "multidisorder:pos=midsld", quic
 	case "tcp":
-		return "fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=6", "multidisorder:pos=midsld", "drop"
+		return fmt.Sprintf("fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=%d", repeats), "multidisorder:pos=midsld", "drop"
 	default:
 		return fake, split, quic
 	}
